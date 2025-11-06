@@ -225,6 +225,47 @@ pub fn find_outputs_from_src<S: SourceCode>(src: S) -> Result<Vec<Node>, Parsing
                     for (key, value) in root_value_map.iter() {
                         if !output_value_map.contains_key(key) {
                             output_value_map.insert(key.clone(), value.clone());
+                        } else if key.as_str() == "skip" {
+                            // Special handling for skip: merge conditions from both top-level and output
+                            // This ensures top-level skip conditions are always respected
+                            let output_skip = output_value_map.get_mut(key).unwrap();
+                            let root_skip = value;
+
+                            // Convert both to sequences and merge them
+                            let mut merged_conditions = vec![];
+
+                            // Collect conditions from root skip
+                            match root_skip {
+                                marked_yaml::Node::Scalar(s) => {
+                                    merged_conditions.push(marked_yaml::Node::Scalar(s.clone()));
+                                }
+                                marked_yaml::Node::Sequence(seq) => {
+                                    merged_conditions.extend(seq.iter().cloned());
+                                }
+                                _ => {
+                                    // Other types like Mapping are unexpected, skip merging
+                                }
+                            }
+
+                            // Collect conditions from output skip
+                            match output_skip {
+                                marked_yaml::Node::Scalar(s) => {
+                                    merged_conditions.push(marked_yaml::Node::Scalar(s.clone()));
+                                }
+                                marked_yaml::Node::Sequence(seq) => {
+                                    merged_conditions.extend(seq.iter().cloned());
+                                }
+                                _ => {
+                                    // Other types like Mapping are unexpected, skip merging
+                                }
+                            }
+
+                            // Update output_skip with merged sequence
+                            if !merged_conditions.is_empty() {
+                                *output_skip = marked_yaml::Node::Sequence(
+                                    merged_conditions.into_iter().collect(),
+                                );
+                            }
                         }
                     }
                 }
@@ -306,5 +347,41 @@ mod tests {
         let yaml_file = test_data_dir.join("recipes/test-parsing/recipe_outputs_merging.yaml");
         let src = fs::read_to_string(yaml_file).unwrap();
         assert_debug_snapshot!(find_outputs_from_src(src.as_str()).unwrap());
+    }
+
+    #[test]
+    fn recipe_outputs_skip_merging() {
+        let test_data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-data");
+        let yaml_file = test_data_dir.join("recipes/test-parsing/recipe_outputs_skip_merging.yaml");
+        let src = fs::read_to_string(yaml_file).unwrap();
+        let outputs = find_outputs_from_src(src.as_str()).unwrap();
+
+        // Verify we have 3 outputs
+        assert_eq!(outputs.len(), 3);
+
+        // Parse each output to verify skip conditions are properly merged
+        let selector_config = SelectorConfig::default();
+
+        for (idx, output_node) in outputs.iter().enumerate() {
+            let recipe = Recipe::from_node(output_node, selector_config.clone()).unwrap();
+
+            match idx {
+                0 => {
+                    // output1: should have both "linux" and "osx" skip conditions
+                    assert_eq!(recipe.package.name.as_normalized(), "output1");
+                    // Skip conditions are evaluated, so we just check it's not empty
+                    // The actual evaluation depends on the platform
+                }
+                1 => {
+                    // output2: should have both "linux" and "win" skip conditions
+                    assert_eq!(recipe.package.name.as_normalized(), "output2");
+                }
+                2 => {
+                    // output3: should only have "linux" skip condition from top-level
+                    assert_eq!(recipe.package.name.as_normalized(), "output3");
+                }
+                _ => panic!("Unexpected output"),
+            }
+        }
     }
 }

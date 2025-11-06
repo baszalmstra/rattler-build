@@ -57,6 +57,16 @@ impl Skip {
         self.0.is_empty()
     }
 
+    /// Merge two Skip instances by combining their conditions.
+    /// The evaluation result is reset to None since the combined conditions
+    /// need to be re-evaluated.
+    pub fn merge(mut self, other: Skip) -> Self {
+        // Add all conditions from the other Skip to this one
+        self.0.extend(other.0);
+        // Reset evaluation result since we have new conditions
+        Skip(self.0, None)
+    }
+
     pub fn with_eval(self, jinja: &Jinja) -> Result<Self, Vec<PartialParsingError>> {
         for condition in &self.0 {
             match jinja.eval(&condition.0) {

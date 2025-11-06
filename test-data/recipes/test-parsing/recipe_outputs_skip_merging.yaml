@@ -1,0 +1,19 @@
+recipe:
+  name: test-skip-merging
+  version: 0.1.0
+
+build:
+  skip: linux
+
+outputs:
+  - package:
+      name: output1
+    build:
+      skip: osx
+  - package:
+      name: output2
+    build:
+      skip: win
+  - package:
+      name: output3
+    # This output should only inherit the top-level skip
