@@ -119,7 +119,7 @@ pub(crate) async fn fetch_source(
     cache_src: &Path,
     system_tools: &SystemTools,
     tool_configuration: &tool_configuration::Configuration,
-    apply_patch: impl Fn(&Path, &Path) -> Result<(), SourceError> + Copy,
+    apply_patch: impl Fn(&Path, &Path) -> Result<bool, SourceError> + Copy,
 ) -> Result<(), SourceError> {
     match &src {
         Source::Git(src) => {
@@ -297,7 +297,7 @@ pub async fn fetch_sources(
     directories: &Directories,
     system_tools: &SystemTools,
     tool_configuration: &tool_configuration::Configuration,
-    apply_patch: impl Fn(&Path, &Path) -> Result<(), SourceError> + Copy,
+    apply_patch: impl Fn(&Path, &Path) -> Result<bool, SourceError> + Copy,
 ) -> Result<Vec<Source>, SourceError> {
     if sources.is_empty() {
         tracing::info!("No sources to fetch");
@@ -359,7 +359,7 @@ impl Output {
     pub async fn fetch_sources(
         self,
         tool_configuration: &tool_configuration::Configuration,
-        apply_patch: impl Fn(&Path, &Path) -> Result<(), SourceError> + Copy,
+        apply_patch: impl Fn(&Path, &Path) -> Result<bool, SourceError> + Copy,
     ) -> Result<Self, SourceError> {
         let span = tracing::info_span!("Fetching source code");
         let _enter = span.enter();

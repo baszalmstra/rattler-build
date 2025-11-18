@@ -97,7 +97,65 @@ fn patch_from_bytes(input: &[u8]) -> Result<Patch<'_, [u8]>, diffy::ParsePatchEr
     )
 }
 
-fn apply(base_image: &[u8], diff: &Diff<'_, [u8]>) -> Result<Vec<u8>, diffy::ApplyError> {
+fn apply(
+    base_image: &[u8],
+    diff: &Diff<'_, [u8]>,
+) -> Result<(Vec<u8>, diffy::ApplyStats), diffy::ApplyError> {
+    // Try without fuzzy matching first to detect already-applied patches
+    let non_fuzzy_result = diffy::apply_bytes_with_config(
+        base_image,
+        diff,
+        &diffy::ApplyConfig {
+            fuzzy_config: diffy::FuzzyConfig {
+                max_fuzz: 0,
+                ignore_whitespace: false,
+                ignore_case: false,
+            },
+            ..Default::default()
+        },
+    );
+
+    // If non-fuzzy application succeeds and reports no changes, the patch is already applied
+    if let Ok((content, stats)) = &non_fuzzy_result {
+        if !stats.has_changes() {
+            return Ok((content.clone(), stats.clone()));
+        }
+    }
+
+    // If non-fuzzy failed, check if all inserted lines are already present (patch already applied)
+    if non_fuzzy_result.is_err() {
+        let mut all_inserts_present = true;
+        for hunk in diff.hunks() {
+            for line in hunk.lines() {
+                if let diffy::Line::Insert((content, _)) = line {
+                    // Check if this inserted line is already in the base image
+                    if !content.is_empty()
+                        && !base_image
+                            .windows(content.len())
+                            .any(|window| window == *content)
+                    {
+                        all_inserts_present = false;
+                        break;
+                    }
+                }
+            }
+            if !all_inserts_present {
+                break;
+            }
+        }
+
+        // If all inserted lines are already present, return no changes
+        if all_inserts_present {
+            return Ok((base_image.to_vec(), diffy::ApplyStats {
+                lines_added: 0,
+                lines_deleted: 0,
+                lines_context: 0,
+                hunks_applied: 0,
+            }));
+        }
+    }
+
+    // If non-fuzzy failed or made changes, try with fuzzy matching
     diffy::apply_bytes_with_config(
         base_image,
         diff,
@@ -209,7 +267,7 @@ pub(crate) fn apply_patch_gnu(
     system_tools: &SystemTools,
     work_dir: &Path,
     patch_file_path: &Path,
-) -> Result<(), SourceError> {
+) -> Result<bool, SourceError> {
     let patch_file_content = fs_err::read(patch_file_path).map_err(SourceError::Io)?;
 
     let patch = patch_from_bytes(&patch_file_content)
@@ -257,18 +315,21 @@ pub(crate) fn apply_patch_gnu(
         )));
     }
 
-    Ok(())
+    // GNU patch doesn't provide statistics, so we assume it made changes if it succeeded
+    Ok(true)
 }
 
 pub(crate) fn apply_patch_custom(
     work_dir: &Path,
     patch_file_path: &Path,
-) -> Result<(), SourceError> {
+) -> Result<bool, SourceError> {
     let patch_file_content = fs_err::read(patch_file_path).map_err(SourceError::Io)?;
 
     let patch = patch_from_bytes(&patch_file_content)
         .map_err(|_| SourceError::PatchParseFailed(patch_file_path.to_path_buf()))?;
     let strip_level = guess_strip_level(&patch, work_dir)?;
+
+    let mut patch_made_changes = false;
 
     for diff in patch {
         let file_paths = custom_patch_stripped_paths(&diff, strip_level);
@@ -286,23 +347,31 @@ pub(crate) fn apply_patch_custom(
         match absolute_file_paths {
             (None, None) => continue,
             (None, Some(m)) => {
-                let new_file_content = apply(&[], &diff).map_err(SourceError::PatchApplyError)?;
+                let (new_file_content, stats) =
+                    apply(&[], &diff).map_err(SourceError::PatchApplyError)?;
                 write_patch_content(&new_file_content, &m)?;
+                if stats.has_changes() {
+                    patch_made_changes = true;
+                }
             }
             (Some(o), None) => {
                 fs_err::remove_file(work_dir.join(o)).map_err(SourceError::Io)?;
+                patch_made_changes = true;
             }
             (Some(o), Some(m)) => {
                 // Check if the original file exists
                 // If it doesn't, treat this as creating a new file
                 if !o.exists() {
-                    let new_file_content =
+                    let (new_file_content, stats) =
                         apply(&[], &diff).map_err(SourceError::PatchApplyError)?;
                     write_patch_content(&new_file_content, &m)?;
+                    if stats.has_changes() {
+                        patch_made_changes = true;
+                    }
                 } else {
                     let old_file_content = fs_err::read(&o).map_err(SourceError::Io)?;
 
-                    let new_file_content =
+                    let (new_file_content, stats) =
                         apply(&old_file_content, &diff).map_err(SourceError::PatchApplyError)?;
 
                     if o != m {
@@ -310,12 +379,15 @@ pub(crate) fn apply_patch_custom(
                     }
 
                     write_patch_content(&new_file_content, &m)?;
+                    if stats.has_changes() {
+                        patch_made_changes = true;
+                    }
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(patch_made_changes)
 }
 
 /// Applies all patches in a list of patches to the specified work directory
@@ -324,7 +396,7 @@ pub(crate) fn apply_patches(
     patches: &[PathBuf],
     work_dir: &Path,
     recipe_dir: &Path,
-    apply_patch: impl Fn(&Path, &Path) -> Result<(), SourceError>,
+    apply_patch: impl Fn(&Path, &Path) -> Result<bool, SourceError>,
 ) -> Result<(), SourceError> {
     // Early out to avoid unnecessary work
     if patches.is_empty() {
@@ -334,13 +406,20 @@ pub(crate) fn apply_patches(
     for patch_path_relative in patches {
         let patch_file_path = recipe_dir.join(patch_path_relative);
 
-        tracing::info!("Applying patch: {}", patch_file_path.to_string_lossy());
-
         if !patch_file_path.exists() {
             return Err(SourceError::PatchNotFound(patch_file_path));
         }
 
-        apply_patch(work_dir, patch_file_path.as_path())?;
+        let made_changes = apply_patch(work_dir, patch_file_path.as_path())?;
+
+        if made_changes {
+            tracing::info!("Applied patch: {}", patch_file_path.to_string_lossy());
+        } else {
+            tracing::info!(
+                "Patch already applied (or not needed): {}",
+                patch_file_path.to_string_lossy()
+            );
+        }
     }
     Ok(())
 }
@@ -771,6 +850,42 @@ mod tests {
         let cmake_list = tempdir.path().join("workdir/CMakeLists.txt");
         let cmake_list = fs_err::read_to_string(&cmake_list).unwrap();
         assert!(cmake_list.contains("cmake_minimum_required(VERSION 3.12)"));
+    }
+
+    #[test]
+    fn test_detect_already_applied_patch() {
+        let (tempdir, _) = setup_patch_test_dir();
+        let work_dir = tempdir.path().join("workdir");
+        let patches_dir = tempdir.path().join("patches");
+
+        // Apply the patch the first time - should make changes
+        let made_changes =
+            apply_patch_custom(&work_dir, &patches_dir.join("test.patch")).unwrap();
+        assert!(
+            made_changes,
+            "First application should report that changes were made"
+        );
+
+        // Verify the patch was applied
+        let text_md = work_dir.join("text.md");
+        let content = fs_err::read_to_string(&text_md).unwrap();
+        assert!(content.contains("Oh, wow, I was patched! Thank you soooo much!"));
+
+        // Apply the same patch again - should detect it's already applied
+        let made_changes =
+            apply_patch_custom(&work_dir, &patches_dir.join("test.patch")).unwrap();
+        assert!(
+            !made_changes,
+            "Second application should report no changes (already applied)"
+        );
+
+        // Verify the content is unchanged
+        let content_after = fs_err::read_to_string(&text_md).unwrap();
+
+        assert_eq!(
+            content, content_after,
+            "Content should not change when patch is already applied"
+        );
     }
 
     /// Prepare all information needed to test patches for package info path.
