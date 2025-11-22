@@ -23,15 +23,22 @@ impl SandboxRunner {
 }
 
 impl Runner for SandboxRunner {
-    fn build_command(&self, args: &[&str], cwd: &Path) -> tokio::process::Command {
+    fn build_command(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+    ) -> Result<tokio::process::Command, std::io::Error> {
         tracing::info!("{}", self.config);
 
-        // Find rattler-sandbox executable or panic (will be caught by execute_with_replacements)
-        let sandbox_exe = find_rattler_sandbox().unwrap_or_else(|| {
+        // Find rattler-sandbox executable
+        let sandbox_exe = find_rattler_sandbox().ok_or_else(|| {
             tracing::error!("rattler-sandbox executable not found in PATH");
             tracing::error!("Please install it by running: pixi global install rattler-sandbox");
-            panic!("rattler-sandbox executable not found. Please install it with: pixi global install rattler-sandbox");
-        });
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "rattler-sandbox executable not found. Please install it with: pixi global install rattler-sandbox",
+            )
+        })?;
 
         let mut command = tokio::process::Command::new(sandbox_exe);
 
@@ -52,6 +59,6 @@ impl Runner for SandboxRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        command
+        Ok(command)
     }
 }

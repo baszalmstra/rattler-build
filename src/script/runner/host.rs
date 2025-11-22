@@ -8,7 +8,11 @@ use std::process::Stdio;
 pub struct HostRunner;
 
 impl Runner for HostRunner {
-    fn build_command(&self, args: &[&str], cwd: &Path) -> tokio::process::Command {
+    fn build_command(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+    ) -> Result<tokio::process::Command, std::io::Error> {
         let mut command = tokio::process::Command::new(args[0]);
 
         command
@@ -21,6 +25,6 @@ impl Runner for HostRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        command
+        Ok(command)
     }
 }

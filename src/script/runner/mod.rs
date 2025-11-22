@@ -29,8 +29,13 @@ pub trait Runner {
     ///
     /// # Returns
     ///
-    /// Returns a configured `tokio::process::Command` ready to be spawned
-    fn build_command(&self, args: &[&str], cwd: &Path) -> tokio::process::Command;
+    /// Returns a configured `tokio::process::Command` ready to be spawned,
+    /// or an error if the command cannot be built (e.g., required tool not found)
+    fn build_command(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+    ) -> Result<tokio::process::Command, std::io::Error>;
 }
 
 /// Execute a command with output streaming and string replacements
@@ -174,7 +179,7 @@ impl RunnerConfiguration {
         replacements: &HashMap<String, String>,
     ) -> Result<std::process::Output, std::io::Error> {
         let runner = self.create_runner();
-        let command = runner.build_command(args, cwd);
+        let command = runner.build_command(args, cwd)?;
         execute_with_replacements(command, cwd, replacements).await
     }
 

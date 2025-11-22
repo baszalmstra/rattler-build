@@ -133,8 +133,20 @@ impl DockerRunner {
 }
 
 impl Runner for DockerRunner {
-    fn build_command(&self, args: &[&str], cwd: &Path) -> tokio::process::Command {
+    fn build_command(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+    ) -> Result<tokio::process::Command, std::io::Error> {
         tracing::info!("{}", self.config);
+
+        // Check if docker command exists
+        if which::which("docker").is_err() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Docker is not available. Please install Docker to use the docker runner.",
+            ));
+        }
 
         let mut command = tokio::process::Command::new("docker");
 
@@ -175,6 +187,6 @@ impl Runner for DockerRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        command
+        Ok(command)
     }
 }
