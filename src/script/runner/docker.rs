@@ -19,7 +19,11 @@ pub struct DockerArguments {
     pub docker: bool,
 
     /// Docker image to use for build execution (required if --docker is enabled)
-    #[clap(long, help_heading = "Docker runner arguments")]
+    #[clap(
+        long,
+        help_heading = "Docker runner arguments",
+        required_if_eq("docker", "true")
+    )]
     pub docker_image: Option<String>,
 
     /// Allow network access during Docker build (default: false if docker is enabled)
@@ -33,11 +37,18 @@ impl From<DockerArguments> for Option<DockerConfiguration> {
             return None;
         }
 
-        // Require docker_image if docker is enabled
-        let image = args.docker_image.unwrap_or_else(|| {
-            eprintln!("Error: --docker-image is required when --docker is enabled");
+        // Docker runner is not supported on Windows
+        #[cfg(windows)]
+        {
+            eprintln!("Error: Docker runner is not supported on Windows");
+            eprintln!("Windows cannot reliably build packages for Linux targets");
             std::process::exit(1);
-        });
+        }
+
+        // docker_image is guaranteed to be Some() due to required_if_eq
+        let image = args
+            .docker_image
+            .expect("docker_image is required when docker is enabled");
 
         Some(DockerConfiguration {
             image,

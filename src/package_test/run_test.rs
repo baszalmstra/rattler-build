@@ -143,6 +143,7 @@ impl Tests {
                         None,
                         None,
                         None,
+                        None,
                         Debug::new(false),
                     )
                     .await
@@ -161,6 +162,7 @@ impl Tests {
                         tmp_dir.path(),
                         cwd,
                         environment,
+                        None,
                         None,
                         None,
                         None,
@@ -648,6 +650,7 @@ impl PythonTest {
                 None,
                 None,
                 None,
+                None,
                 config.debug,
             )
             .await
@@ -669,6 +672,7 @@ impl PythonTest {
                     path,
                     path,
                     &test_prefix,
+                    None,
                     None,
                     None,
                     None,
@@ -746,6 +750,7 @@ impl PerlTest {
                 &test_folder,
                 path,
                 &test_prefix,
+                None,
                 None,
                 None,
                 None,
@@ -859,6 +864,7 @@ impl CommandsTest {
                 path,
                 &run_prefix,
                 build_prefix.as_ref(),
+                None,
                 None,
                 None,
                 config.debug,
@@ -1024,6 +1030,7 @@ impl RTest {
                 None,
                 None,
                 None,
+                None,
                 config.debug,
             )
             .await
@@ -1093,6 +1100,7 @@ impl RubyTest {
                 &test_folder,
                 path,
                 &test_prefix,
+                None,
                 None,
                 None,
                 None,
