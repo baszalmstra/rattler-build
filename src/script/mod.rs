@@ -1,10 +1,10 @@
 //! Module for running scripts in different interpreters.
 mod interpreter;
-mod sandbox;
 mod runner;
+mod sandbox;
 pub use interpreter::InterpreterError;
-pub use sandbox::{SandboxArguments, SandboxConfiguration};
 pub use runner::{DockerArguments, DockerConfiguration, Runner, RunnerConfiguration};
+pub use sandbox::{SandboxArguments, SandboxConfiguration};
 
 use crate::script::interpreter::Interpreter;
 use futures::TryStreamExt;

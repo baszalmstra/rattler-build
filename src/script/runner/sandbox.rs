@@ -1,8 +1,8 @@
 //! Sandbox runner - executes commands using rattler-sandbox
 
 use super::Runner;
+use crate::script::{SandboxConfiguration, normalize_crlf};
 use async_trait::async_trait;
-use crate::script::{normalize_crlf, SandboxConfiguration};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

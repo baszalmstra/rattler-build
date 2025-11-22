@@ -1,12 +1,12 @@
 //! Module for different script execution runners (host, sandbox, docker)
 
+mod docker;
 mod host;
 mod sandbox;
-mod docker;
 
+pub use docker::{DockerArguments, DockerConfiguration, DockerRunner};
 pub use host::HostRunner;
 pub use sandbox::SandboxRunner;
-pub use docker::{DockerRunner, DockerConfiguration, DockerArguments};
 
 use crate::script::SandboxConfiguration;
 use async_trait::async_trait;

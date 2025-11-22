@@ -1,8 +1,8 @@
 //! Docker runner - executes commands inside a Docker container
 
 use super::Runner;
-use async_trait::async_trait;
 use crate::script::normalize_crlf;
+use async_trait::async_trait;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -120,10 +120,7 @@ impl DockerRunner {
 
         match output {
             Ok(output) if output.status.success() => Ok(()),
-            Ok(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Docker command failed",
-            )),
+            Ok(_) => Err(std::io::Error::other("Docker command failed")),
             Err(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "Docker is not available. Please install Docker to use the docker runner.",
