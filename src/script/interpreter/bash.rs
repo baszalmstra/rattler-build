@@ -67,10 +67,10 @@ impl Interpreter for BashInterpreter {
             return Err(InterpreterError::Debug(print_debug_info(&args)));
         }
 
-        // Execute the command using the configured runner
+        // Execute the command using the prepared runner
         let output = args
-            .runner_config
-            .run_command(
+            .runner
+            .execute_command(
                 &cmd_args,
                 &args.work_dir,
                 &args.env_vars,

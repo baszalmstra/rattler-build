@@ -182,6 +182,46 @@ async fn execute_with_replacements(
     })
 }
 
+/// A prepared runner ready for executing commands
+///
+/// This holds a runner instance along with any associated configuration (like volume mounts).
+/// The interpreter can use this to execute one or more commands in the same execution environment.
+pub struct PreparedRunner {
+    runner: Box<dyn Runner + Send + Sync>,
+    mounts: Vec<VolumeMount>,
+}
+
+impl PreparedRunner {
+    /// Execute a command in this runner's environment
+    ///
+    /// # Arguments
+    ///
+    /// * `command_args` - The command and its arguments to execute
+    /// * `work_dir` - The working directory for the command
+    /// * `env_vars` - Environment variables to set for the command
+    /// * `replacements` - String replacements to apply to output (for path masking, secret redaction)
+    ///
+    /// # Returns
+    ///
+    /// Returns the output of the command execution
+    pub async fn execute_command(
+        &self,
+        command_args: &[&str],
+        work_dir: &Path,
+        env_vars: &IndexMap<String, String>,
+        replacements: &HashMap<String, String>,
+    ) -> Result<std::process::Output, std::io::Error> {
+        let context = RunnerContext {
+            command_args,
+            work_dir,
+            env_vars,
+            mounts: &self.mounts,
+        };
+        let command = self.runner.build_command(&context)?;
+        execute_with_replacements(command, work_dir, replacements).await
+    }
+}
+
 /// Configuration for selecting and configuring a runner
 #[derive(Debug, Clone)]
 pub enum RunnerConfiguration {
@@ -194,56 +234,22 @@ pub enum RunnerConfiguration {
 }
 
 impl RunnerConfiguration {
-    /// Create a runner instance based on this configuration
-    pub fn create_runner(&self) -> Box<dyn Runner + Send + Sync> {
-        match self {
-            RunnerConfiguration::Host => Box::new(HostRunner),
+    /// Prepare a runner from this configuration
+    ///
+    /// This creates the actual runner instance that can be used to execute commands.
+    pub fn prepare_runner(&self) -> PreparedRunner {
+        let runner = match self {
+            RunnerConfiguration::Host => Box::new(HostRunner) as Box<dyn Runner + Send + Sync>,
             RunnerConfiguration::Sandbox(config) => Box::new(SandboxRunner::new(config.clone())),
             RunnerConfiguration::Docker(config, _) => Box::new(DockerRunner::new(config.clone())),
-        }
-    }
-
-    /// Get the mounts associated with this configuration
-    fn get_mounts(&self) -> &[VolumeMount] {
-        match self {
-            RunnerConfiguration::Docker(_, mounts) => mounts,
-            _ => &[],
-        }
-    }
-
-    /// Run a command in the configured execution environment
-    ///
-    /// This is the main entry point for executing commands through runners.
-    /// It creates the appropriate runner, builds the command, and executes it
-    /// with output streaming and string replacements.
-    ///
-    /// # Arguments
-    ///
-    /// * `args` - The command and its arguments to execute
-    /// * `cwd` - The working directory for the command
-    /// * `env_vars` - Environment variables to set for the command
-    /// * `replacements` - String replacements to apply to output (for path masking, secret redaction)
-    ///
-    /// # Returns
-    ///
-    /// Returns the output of the command execution
-    pub async fn run_command(
-        &self,
-        args: &[&str],
-        cwd: &Path,
-        env_vars: &IndexMap<String, String>,
-        replacements: &HashMap<String, String>,
-    ) -> Result<std::process::Output, std::io::Error> {
-        let runner = self.create_runner();
-        let mounts = self.get_mounts();
-        let context = RunnerContext {
-            command_args: args,
-            work_dir: cwd,
-            env_vars,
-            mounts,
         };
-        let command = runner.build_command(&context)?;
-        execute_with_replacements(command, cwd, replacements).await
+
+        let mounts = match self {
+            RunnerConfiguration::Docker(_, mounts) => mounts.clone(),
+            _ => Vec::new(),
+        };
+
+        PreparedRunner { runner, mounts }
     }
 
     /// Check if this is a host runner

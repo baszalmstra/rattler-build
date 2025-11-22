@@ -41,7 +41,6 @@ use crate::{
 };
 
 /// Arguments for executing a script in a given interpreter.
-#[derive(Debug)]
 pub struct ExecutionArgs {
     /// Contents of the script to execute
     pub script: ResolvedScriptContents,
@@ -61,8 +60,8 @@ pub struct ExecutionArgs {
     /// The working directory (`cwd`) in which the script should execute
     pub work_dir: PathBuf,
 
-    /// The runner configuration to use for the script execution
-    pub runner_config: RunnerConfiguration,
+    /// The prepared runner to use for script execution
+    pub runner: runner::PreparedRunner,
 
     /// Whether to enable debug output
     pub debug: Debug,
@@ -327,6 +326,9 @@ impl Script {
             RunnerConfiguration::Host
         };
 
+        // Prepare the runner from the configuration
+        let runner = runner_config.prepare_runner();
+
         let exec_args = ExecutionArgs {
             script: contents,
             env_vars,
@@ -335,7 +337,7 @@ impl Script {
             run_prefix: run_prefix.to_owned(),
             execution_platform: Platform::current(),
             work_dir,
-            runner_config,
+            runner,
             debug,
         };
 
@@ -417,6 +419,9 @@ impl Output {
             RunnerConfiguration::Host
         };
 
+        // Prepare the runner from the configuration
+        let runner = runner_config.prepare_runner();
+
         Ok(ExecutionArgs {
             script: self.recipe.build().script().resolve_content(
                 &self.build_configuration.directories.recipe_dir,
@@ -432,7 +437,7 @@ impl Output {
             run_prefix: host_prefix,
             execution_platform: Platform::current(),
             work_dir: work_dir.clone(),
-            runner_config,
+            runner,
             debug: self.build_configuration.debug,
         })
     }
