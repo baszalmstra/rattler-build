@@ -67,7 +67,12 @@ impl Interpreter for CmdExeInterpreter {
         // Execute the command using the configured runner
         let output = args
             .runner_config
-            .run_command(&cmd_args, &args.work_dir, &args.replacements("%((var))%"))
+            .run_command(
+                &cmd_args,
+                &args.work_dir,
+                &args.env_vars,
+                &args.replacements("%((var))%"),
+            )
             .await?;
 
         if !output.status.success() {

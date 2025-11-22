@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Parser, Clone, Default)]
 pub struct SandboxArguments {
     /// Enable the sandbox
-    #[clap(long, action, help_heading = "Sandbox arguments")]
+    #[clap(
+        long,
+        action,
+        help_heading = "Sandbox arguments",
+        conflicts_with = "docker"
+    )]
     pub sandbox: bool,
 
     /// Allow network access during build (default: false if sandbox is enabled)

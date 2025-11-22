@@ -387,13 +387,14 @@ impl Output {
         // Create runner_config based on docker_config or sandbox_config
         // Docker takes priority if both are specified
         let runner_config = if let Some(docker_config) = self.build_configuration.docker_config() {
-            // Collect paths to mount in the Docker container
+            // Collect volume mounts with appropriate access modes
+            use crate::script::runner::VolumeMount;
             let mut mounts = vec![
-                self.build_configuration.directories.host_prefix.clone(),
-                work_dir.clone(),
+                VolumeMount::read_write(self.build_configuration.directories.host_prefix.clone()),
+                VolumeMount::read_write(work_dir.clone()),
             ];
             if let Some(build_prefix_ref) = build_prefix {
-                mounts.push(build_prefix_ref.clone());
+                mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
             }
             RunnerConfiguration::Docker(docker_config.clone(), mounts)
         } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {

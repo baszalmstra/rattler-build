@@ -9,11 +9,61 @@ pub use host::HostRunner;
 pub use sandbox::SandboxRunner;
 
 use crate::script::SandboxConfiguration;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 use crate::script::normalize_crlf;
+
+/// Access mode for volume mounts
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeAccessMode {
+    /// Read-only access
+    ReadOnly,
+    /// Read-write access
+    ReadWrite,
+}
+
+/// A volume mount specification with path and access mode
+#[derive(Debug, Clone)]
+pub struct VolumeMount {
+    /// The path to mount
+    pub path: PathBuf,
+    /// The access mode for this mount
+    pub access_mode: VolumeAccessMode,
+}
+
+impl VolumeMount {
+    /// Create a new read-only volume mount
+    pub fn read_only(path: PathBuf) -> Self {
+        Self {
+            path,
+            access_mode: VolumeAccessMode::ReadOnly,
+        }
+    }
+
+    /// Create a new read-write volume mount
+    pub fn read_write(path: PathBuf) -> Self {
+        Self {
+            path,
+            access_mode: VolumeAccessMode::ReadWrite,
+        }
+    }
+}
+
+/// Context for running a command in a specific execution environment
+#[derive(Debug)]
+pub struct RunnerContext<'a> {
+    /// The command and its arguments to execute
+    pub command_args: &'a [&'a str],
+    /// The working directory for the command
+    pub work_dir: &'a Path,
+    /// Environment variables to set for the command
+    pub env_vars: &'a IndexMap<String, String>,
+    /// Volume mounts with their access modes
+    pub mounts: &'a [VolumeMount],
+}
 
 /// Trait for different script execution runners
 ///
@@ -24,8 +74,7 @@ pub trait Runner {
     ///
     /// # Arguments
     ///
-    /// * `args` - The command and its arguments to execute
-    /// * `cwd` - The working directory for the command
+    /// * `context` - The context containing command args, working directory, and environment variables
     ///
     /// # Returns
     ///
@@ -33,8 +82,7 @@ pub trait Runner {
     /// or an error if the command cannot be built (e.g., required tool not found)
     fn build_command(
         &self,
-        args: &[&str],
-        cwd: &Path,
+        context: &RunnerContext,
     ) -> Result<tokio::process::Command, std::io::Error>;
 }
 
@@ -142,7 +190,7 @@ pub enum RunnerConfiguration {
     /// Execute in a sandboxed environment
     Sandbox(SandboxConfiguration),
     /// Execute in a Docker container
-    Docker(DockerConfiguration, Vec<PathBuf>), // config + additional mounts
+    Docker(DockerConfiguration, Vec<VolumeMount>), // config + volume mounts
 }
 
 impl RunnerConfiguration {
@@ -151,9 +199,15 @@ impl RunnerConfiguration {
         match self {
             RunnerConfiguration::Host => Box::new(HostRunner),
             RunnerConfiguration::Sandbox(config) => Box::new(SandboxRunner::new(config.clone())),
-            RunnerConfiguration::Docker(config, mounts) => {
-                Box::new(DockerRunner::new(config.clone()).with_mounts(mounts.clone()))
-            }
+            RunnerConfiguration::Docker(config, _) => Box::new(DockerRunner::new(config.clone())),
+        }
+    }
+
+    /// Get the mounts associated with this configuration
+    fn get_mounts(&self) -> &[VolumeMount] {
+        match self {
+            RunnerConfiguration::Docker(_, mounts) => mounts,
+            _ => &[],
         }
     }
 
@@ -167,6 +221,7 @@ impl RunnerConfiguration {
     ///
     /// * `args` - The command and its arguments to execute
     /// * `cwd` - The working directory for the command
+    /// * `env_vars` - Environment variables to set for the command
     /// * `replacements` - String replacements to apply to output (for path masking, secret redaction)
     ///
     /// # Returns
@@ -176,10 +231,18 @@ impl RunnerConfiguration {
         &self,
         args: &[&str],
         cwd: &Path,
+        env_vars: &IndexMap<String, String>,
         replacements: &HashMap<String, String>,
     ) -> Result<std::process::Output, std::io::Error> {
         let runner = self.create_runner();
-        let command = runner.build_command(args, cwd)?;
+        let mounts = self.get_mounts();
+        let context = RunnerContext {
+            command_args: args,
+            work_dir: cwd,
+            env_vars,
+            mounts,
+        };
+        let command = runner.build_command(&context)?;
         execute_with_replacements(command, cwd, replacements).await
     }
 
