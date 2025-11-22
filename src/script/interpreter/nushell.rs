@@ -7,7 +7,7 @@ use rattler_shell::{
     shell::{self, Shell, ShellEnum},
 };
 
-use crate::script::{ExecutionArgs, run_process_with_replacements};
+use crate::script::ExecutionArgs;
 
 use super::{Interpreter, InterpreterError, find_interpreter};
 
@@ -120,13 +120,11 @@ impl Interpreter for NuShellInterpreter {
 
         let cmd_args = [nu_path.as_str(), build_script_path_str.as_str()];
 
-        let output = run_process_with_replacements(
-            &cmd_args,
-            &args.work_dir,
-            &args.replacements("$((var))"),
-            None,
-        )
-        .await?;
+        // Create the appropriate runner and execute the command
+        let runner = args.runner_config.create_runner();
+        let output = runner
+            .run_command(&cmd_args, &args.work_dir, &args.replacements("$((var))"))
+            .await?;
 
         if !output.status.success() {
             let status_code = output.status.code().unwrap_or(1);

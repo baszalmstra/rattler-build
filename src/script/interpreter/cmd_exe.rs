@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use rattler_conda_types::Platform;
 use rattler_shell::shell;
 
-use crate::script::{ExecutionArgs, run_process_with_replacements};
+use crate::script::ExecutionArgs;
 
 use super::{CMDEXE_PREAMBLE, Interpreter, InterpreterError, find_interpreter};
 
@@ -64,13 +64,11 @@ impl Interpreter for CmdExeInterpreter {
             return Err(InterpreterError::Debug(print_debug_info(&args)));
         }
 
-        let output = run_process_with_replacements(
-            &cmd_args,
-            &args.work_dir,
-            &args.replacements("%((var))%"),
-            None,
-        )
-        .await?;
+        // Create the appropriate runner and execute the command
+        let runner = args.runner_config.create_runner();
+        let output = runner
+            .run_command(&cmd_args, &args.work_dir, &args.replacements("%((var))%"))
+            .await?;
 
         if !output.status.success() {
             let status_code = output.status.code().unwrap_or(1);

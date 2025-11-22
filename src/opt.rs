@@ -25,7 +25,7 @@ use crate::recipe_generator::GenerateRecipeOpts;
 use crate::{
     console_utils::{Color, LogStyle},
     metadata::Debug,
-    script::{SandboxArguments, SandboxConfiguration},
+    script::{DockerArguments, SandboxArguments, SandboxConfiguration},
     tool_configuration::{ContinueOnFailure, SkipExisting, TestStrategy},
 };
 
@@ -499,6 +499,10 @@ pub struct BuildOpts {
     #[clap(flatten)]
     pub sandbox_arguments: SandboxArguments,
 
+    #[allow(missing_docs)]
+    #[clap(flatten)]
+    pub docker_arguments: DockerArguments,
+
     /// Enable debug output in build scripts
     #[arg(long, help_heading = "Modifying result")]
     pub debug: bool,
@@ -672,6 +676,7 @@ pub struct BuildData {
     pub noarch_build_platform: Option<Platform>,
     pub extra_meta: Option<Vec<(String, Value)>>,
     pub sandbox_configuration: Option<SandboxConfiguration>,
+    pub docker_configuration: Option<crate::script::DockerConfiguration>,
     pub debug: Debug,
     pub continue_on_failure: ContinueOnFailure,
     pub error_prefix_in_binary: bool,
@@ -707,6 +712,7 @@ impl BuildData {
         noarch_build_platform: Option<Platform>,
         extra_meta: Option<Vec<(String, Value)>>,
         sandbox_configuration: Option<SandboxConfiguration>,
+        docker_configuration: Option<crate::script::DockerConfiguration>,
         debug: Debug,
         continue_on_failure: ContinueOnFailure,
         error_prefix_in_binary: bool,
@@ -746,6 +752,7 @@ impl BuildData {
             noarch_build_platform,
             extra_meta,
             sandbox_configuration,
+            docker_configuration,
             debug,
             continue_on_failure,
             error_prefix_in_binary,
@@ -796,6 +803,7 @@ impl BuildData {
             opts.noarch_build_platform,
             opts.extra_meta,
             opts.sandbox_arguments.into(),
+            opts.docker_arguments.into(),
             Debug::new(opts.debug),
             opts.continue_on_failure.into(),
             opts.error_prefix_in_binary,

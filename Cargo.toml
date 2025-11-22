@@ -96,6 +96,7 @@ serde = { workspace = true }
 serde_yaml = { workspace = true }
 serde-untagged = "0.1.8"
 anyhow = "1.0.99"
+async-trait = "0.1.89"
 walkdir = "2.5.0"
 hex = "0.4.3"
 serde_json = { workspace = true }

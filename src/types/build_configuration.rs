@@ -60,6 +60,9 @@ pub struct BuildConfiguration {
     /// The configuration for the sandbox
     #[serde(skip_serializing, default)]
     pub sandbox_config: Option<SandboxConfiguration>,
+    /// The configuration for the Docker runner
+    #[serde(skip_serializing, default)]
+    pub docker_config: Option<crate::script::DockerConfiguration>,
     /// Whether to enable debug output in build scripts
     #[serde(skip_serializing, default)]
     pub debug: Debug,
@@ -77,6 +80,11 @@ impl BuildConfiguration {
     /// Retrieve the sandbox configuration for this output
     pub fn sandbox_config(&self) -> Option<&SandboxConfiguration> {
         self.sandbox_config.as_ref()
+    }
+
+    /// Retrieve the Docker configuration for this output
+    pub fn docker_config(&self) -> Option<&crate::script::DockerConfiguration> {
+        self.docker_config.as_ref()
     }
 
     /// Construct a `SelectorConfig` from the given `BuildConfiguration`

@@ -1,8 +1,10 @@
 //! Module for running scripts in different interpreters.
 mod interpreter;
 mod sandbox;
+mod runner;
 pub use interpreter::InterpreterError;
 pub use sandbox::{SandboxArguments, SandboxConfiguration};
+pub use runner::{DockerArguments, DockerConfiguration, Runner, RunnerConfiguration};
 
 use crate::script::interpreter::Interpreter;
 use futures::TryStreamExt;
@@ -20,9 +22,8 @@ use std::{
     collections::HashSet,
     io,
     path::{Path, PathBuf},
-    process::Stdio,
 };
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt};
+use tokio::io::AsyncRead;
 use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, FramedRead},
@@ -60,8 +61,8 @@ pub struct ExecutionArgs {
     /// The working directory (`cwd`) in which the script should execute
     pub work_dir: PathBuf,
 
-    /// The sandbox configuration to use for the script execution
-    pub sandbox_config: Option<SandboxConfiguration>,
+    /// The runner configuration to use for the script execution
+    pub runner_config: RunnerConfiguration,
 
     /// Whether to enable debug output
     pub debug: Debug,
@@ -306,6 +307,12 @@ impl Script {
 
         tracing::debug!("Running script in {}", work_dir.display());
 
+        // Convert sandbox_config to runner_config
+        let runner_config = match sandbox_config {
+            Some(config) => RunnerConfiguration::Sandbox(config.clone()),
+            None => RunnerConfiguration::Host,
+        };
+
         let exec_args = ExecutionArgs {
             script: contents,
             env_vars,
@@ -314,7 +321,7 @@ impl Script {
             run_prefix: run_prefix.to_owned(),
             execution_platform: Platform::current(),
             work_dir,
-            sandbox_config: sandbox_config.cloned(),
+            runner_config,
             debug,
         };
 
@@ -376,6 +383,25 @@ impl Output {
         };
 
         let work_dir = &self.build_configuration.directories.work_dir;
+
+        // Create runner_config based on docker_config or sandbox_config
+        // Docker takes priority if both are specified
+        let runner_config = if let Some(docker_config) = self.build_configuration.docker_config() {
+            // Collect paths to mount in the Docker container
+            let mut mounts = vec![
+                self.build_configuration.directories.host_prefix.clone(),
+                work_dir.clone(),
+            ];
+            if let Some(build_prefix_ref) = build_prefix {
+                mounts.push(build_prefix_ref.clone());
+            }
+            RunnerConfiguration::Docker(docker_config.clone(), mounts)
+        } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {
+            RunnerConfiguration::Sandbox(sandbox_config.clone())
+        } else {
+            RunnerConfiguration::Host
+        };
+
         Ok(ExecutionArgs {
             script: self.recipe.build().script().resolve_content(
                 &self.build_configuration.directories.recipe_dir,
@@ -391,7 +417,7 @@ impl Output {
             run_prefix: host_prefix,
             execution_platform: Platform::current(),
             work_dir: work_dir.clone(),
-            sandbox_config: self.build_configuration.sandbox_config().cloned(),
+            runner_config,
             debug: self.build_configuration.debug,
         })
     }
@@ -555,138 +581,6 @@ impl Decoder for CrLfNormalizer {
             Ok(Some(bytes))
         }
     }
-}
-
-/// Find the rattler-sandbox executable in PATH
-fn find_rattler_sandbox() -> Option<PathBuf> {
-    which::which("rattler-sandbox").ok()
-}
-
-/// Spawns a process and replaces the given strings in the output with the given replacements.
-/// This is used to replace the host prefix with $PREFIX and the build prefix with $BUILD_PREFIX
-async fn run_process_with_replacements(
-    args: &[&str],
-    cwd: &Path,
-    replacements: &HashMap<String, String>,
-    sandbox_config: Option<&SandboxConfiguration>,
-) -> Result<std::process::Output, std::io::Error> {
-    // Create or open the build log file
-    let log_file_path = cwd.join("conda_build.log");
-    let mut log_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-        .await?;
-    let mut command = if let Some(sandbox_config) = sandbox_config {
-        tracing::info!("{}", sandbox_config);
-
-        // Try to find rattler-sandbox executable
-        if let Some(sandbox_exe) = find_rattler_sandbox() {
-            let mut cmd = tokio::process::Command::new(sandbox_exe);
-
-            // Add sandbox configuration arguments
-            let sandbox_args = sandbox_config.with_cwd(cwd).to_args();
-            cmd.args(&sandbox_args);
-
-            // Add the actual command to execute (as positional arguments)
-            cmd.arg(args[0]);
-            cmd.args(&args[1..]);
-
-            cmd
-        } else {
-            tracing::error!("rattler-sandbox executable not found in PATH");
-            tracing::error!("Please install it by running: pixi global install rattler-sandbox");
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "rattler-sandbox executable not found. Please install it with: pixi global install rattler-sandbox",
-            ));
-        }
-    } else {
-        tokio::process::Command::new(args[0])
-    };
-
-    command
-        .current_dir(cwd)
-        // when using `pixi global install bash` the current work dir
-        // causes some strange issues that are fixed when setting the `PWD`
-        .env("PWD", cwd)
-        .args(&args[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command.spawn()?;
-
-    let stdout = child.stdout.take().expect("Failed to take stdout");
-    let stderr = child.stderr.take().expect("Failed to take stderr");
-
-    let stdout_wrapped = normalize_crlf(stdout);
-    let stderr_wrapped = normalize_crlf(stderr);
-
-    let mut stdout_lines = tokio::io::BufReader::new(stdout_wrapped).lines();
-    let mut stderr_lines = tokio::io::BufReader::new(stderr_wrapped).lines();
-
-    let mut stdout_log = String::new();
-    let mut stderr_log = String::new();
-    let mut closed = (false, false);
-
-    loop {
-        let (line, is_stderr) = tokio::select! {
-            line = stdout_lines.next_line() => (line, false),
-            line = stderr_lines.next_line() => (line, true),
-            else => break,
-        };
-
-        match line {
-            Ok(Some(line)) => {
-                let filtered_line = replacements
-                    .iter()
-                    .fold(line, |acc, (from, to)| acc.replace(from, to));
-
-                if is_stderr {
-                    stderr_log.push_str(&filtered_line);
-                    stderr_log.push('\n');
-                } else {
-                    stdout_log.push_str(&filtered_line);
-                    stdout_log.push('\n');
-                }
-
-                // Write to log file
-                if let Err(e) = log_file.write_all(filtered_line.as_bytes()).await {
-                    tracing::warn!("Failed to write to build log: {:?}", e);
-                }
-                if let Err(e) = log_file.write_all(b"\n").await {
-                    tracing::warn!("Failed to write newline to build log: {:?}", e);
-                }
-
-                tracing::info!("{}", filtered_line);
-            }
-            Ok(None) if !is_stderr => closed.0 = true,
-            Ok(None) if is_stderr => closed.1 = true,
-            Ok(None) => unreachable!(),
-            Err(e) => {
-                tracing::warn!("Error reading output: {:?}", e);
-                break;
-            }
-        };
-        // make sure we close the loop when both stdout and stderr are closed
-        if closed == (true, true) {
-            break;
-        }
-    }
-
-    let status = child.wait().await?;
-
-    // Flush and close the log file
-    if let Err(e) = log_file.flush().await {
-        tracing::warn!("Failed to flush build log: {:?}", e);
-    }
-
-    Ok(std::process::Output {
-        status,
-        stdout: stdout_log.into_bytes(),
-        stderr: stderr_log.into_bytes(),
-    })
 }
 
 #[cfg(test)]
