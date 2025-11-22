@@ -64,9 +64,9 @@ impl Interpreter for CmdExeInterpreter {
             return Err(InterpreterError::Debug(print_debug_info(&args)));
         }
 
-        // Create the appropriate runner and execute the command
-        let runner = args.runner_config.create_runner();
-        let output = runner
+        // Execute the command using the configured runner
+        let output = args
+            .runner_config
             .run_command(&cmd_args, &args.work_dir, &args.replacements("%((var))%"))
             .await?;
 

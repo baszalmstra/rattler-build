@@ -120,9 +120,9 @@ impl Interpreter for NuShellInterpreter {
 
         let cmd_args = [nu_path.as_str(), build_script_path_str.as_str()];
 
-        // Create the appropriate runner and execute the command
-        let runner = args.runner_config.create_runner();
-        let output = runner
+        // Execute the command using the configured runner
+        let output = args
+            .runner_config
             .run_command(&cmd_args, &args.work_dir, &args.replacements("$((var))"))
             .await?;
 
