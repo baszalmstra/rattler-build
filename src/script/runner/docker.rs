@@ -67,18 +67,19 @@ pub struct DockerConfiguration {
 
 impl Display for DockerConfiguration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{} Docker Configuration", console::Emoji("🐳", " "))?;
-        writeln!(f, "Image: {}", self.image)?;
-        writeln!(
+        let network_badge = if self.allow_network {
+            "network:on"
+        } else {
+            "network:off"
+        };
+
+        write!(
             f,
-            "Network Access: {}",
-            if self.allow_network {
-                console::Emoji("✅", " ")
-            } else {
-                console::Emoji("❌", " ")
-            }
-        )?;
-        Ok(())
+            "[{} {}] [🔒 {}]",
+            console::Emoji("🐳", "Docker"),
+            console::style(&self.image).cyan().bold(),
+            console::style(network_badge).dim()
+        )
     }
 }
 
