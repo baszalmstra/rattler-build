@@ -52,8 +52,8 @@ impl Interpreter for BashInterpreter {
         #[cfg(unix)]
         {
             use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-            let permissions = Permissions::from_mode(0o755);
-            tokio::fs::set_permissions(&build_script_path, permissions).await?;
+            tokio::fs::set_permissions(&build_env_path, Permissions::from_mode(0o755)).await?;
+            tokio::fs::set_permissions(&build_script_path, Permissions::from_mode(0o755)).await?;
         }
 
         let build_script_path_str = build_script_path.to_string_lossy().to_string();
