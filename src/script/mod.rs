@@ -316,11 +316,14 @@ impl Script {
                 // Collect volume mounts with appropriate access modes
                 use crate::script::runner::VolumeMount;
                 let mut mounts = vec![
-                    VolumeMount::read_write(run_prefix.to_path_buf()),
-                    VolumeMount::read_write(work_dir.clone()),
+                    VolumeMount::read_write(run_prefix.to_path_buf()).with_label("$PREFIX"),
+                    VolumeMount::read_write(work_dir.clone()).with_label("$SRC_DIR"),
                 ];
                 if let Some(build_prefix_ref) = build_prefix {
-                    mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
+                    mounts.push(
+                        VolumeMount::read_only(build_prefix_ref.clone())
+                            .with_label("$BUILD_PREFIX"),
+                    );
                 }
                 Box::new(runner::DockerRunner::new(config.clone(), mounts))
             }
@@ -405,11 +408,14 @@ impl Output {
             // Collect volume mounts with appropriate access modes
             use crate::script::runner::VolumeMount;
             let mut mounts = vec![
-                VolumeMount::read_write(self.build_configuration.directories.host_prefix.clone()),
-                VolumeMount::read_write(work_dir.clone()),
+                VolumeMount::read_write(self.build_configuration.directories.host_prefix.clone())
+                    .with_label("$PREFIX"),
+                VolumeMount::read_write(work_dir.clone()).with_label("$SRC_DIR"),
             ];
             if let Some(build_prefix_ref) = build_prefix {
-                mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
+                mounts.push(
+                    VolumeMount::read_only(build_prefix_ref.clone()).with_label("$BUILD_PREFIX"),
+                );
             }
             Box::new(runner::DockerRunner::new(docker_config.clone(), mounts))
         } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {

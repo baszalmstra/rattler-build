@@ -31,6 +31,8 @@ pub struct VolumeMount {
     pub path: PathBuf,
     /// The access mode for this mount
     pub access_mode: VolumeAccessMode,
+    /// Optional label for display purposes (e.g., "$PREFIX")
+    pub label: Option<String>,
 }
 
 impl VolumeMount {
@@ -39,6 +41,7 @@ impl VolumeMount {
         Self {
             path,
             access_mode: VolumeAccessMode::ReadOnly,
+            label: None,
         }
     }
 
@@ -47,7 +50,14 @@ impl VolumeMount {
         Self {
             path,
             access_mode: VolumeAccessMode::ReadWrite,
+            label: None,
         }
+    }
+
+    /// Set a label for this mount
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
     }
 }
 

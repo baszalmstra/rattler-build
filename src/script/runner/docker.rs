@@ -1,8 +1,8 @@
 //! Docker runner - executes commands inside a Docker container
 
 use clap::Parser;
+use comfy_table::Table;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 
 /// CLI argument parser for Docker runner
 #[derive(Debug, Parser, Clone, Default)]
@@ -65,24 +65,6 @@ pub struct DockerConfiguration {
     pub allow_network: bool,
 }
 
-impl Display for DockerConfiguration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let network_badge = if self.allow_network {
-            "network:on"
-        } else {
-            "network:off"
-        };
-
-        write!(
-            f,
-            "[{} {}] [🔒 {}]",
-            console::Emoji("🐳", "Docker"),
-            console::style(&self.image).cyan().bold(),
-            console::style(network_badge).dim()
-        )
-    }
-}
-
 impl DockerConfiguration {
     /// Create a new Docker configuration with the given image
     pub fn new(image: String) -> Self {
@@ -110,6 +92,73 @@ impl DockerRunner {
     pub fn new(config: DockerConfiguration, mounts: Vec<super::VolumeMount>) -> Self {
         Self { config, mounts }
     }
+
+    /// Display the Docker configuration as a table
+    fn display_table(&self) {
+        let mut table = Table::new();
+        table
+            .load_preset(comfy_table::presets::UTF8_FULL_CONDENSED)
+            .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+
+        // Add header
+        table.add_row(vec![
+            "",
+            &format!("{} Docker Build Environment", console::Emoji("🐳", "")),
+        ]);
+
+        // Add separator
+        table.add_row(vec!["", ""]);
+
+        // Add image
+        table.add_row(vec![
+            "Image:",
+            &console::style(&self.config.image).cyan().bold().to_string(),
+        ]);
+
+        // Add network status
+        let network_status = if self.config.allow_network {
+            console::style("Enabled").green().to_string()
+        } else {
+            console::style("Isolated (--network=none)")
+                .dim()
+                .to_string()
+        };
+        table.add_row(vec!["Network:", &network_status]);
+
+        // Add empty row for spacing
+        table.add_row(vec!["", ""]);
+
+        // Add volume mounts header
+        table.add_row(vec!["Volume Mounts:", ""]);
+
+        // Add each mount
+        for mount in &self.mounts {
+            let path_display = if let Some(label) = &mount.label {
+                console::style(label).cyan().to_string()
+            } else {
+                mount.path.display().to_string()
+            };
+
+            let access = match mount.access_mode {
+                super::VolumeAccessMode::ReadOnly => {
+                    console::style("(read-only)").dim().to_string()
+                }
+                super::VolumeAccessMode::ReadWrite => {
+                    console::style("(read-write)").dim().to_string()
+                }
+            };
+
+            table.add_row(vec![
+                &format!("  {}", console::Emoji("•", "-")),
+                &format!("{} {}", path_display, access),
+            ]);
+        }
+
+        // Add empty row for spacing
+        table.add_row(vec!["", ""]);
+
+        tracing::info!("\n{}", table);
+    }
 }
 
 impl super::Runner for DockerRunner {
@@ -118,7 +167,8 @@ impl super::Runner for DockerRunner {
         command_args: &[&str],
         work_dir: &std::path::Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
-        tracing::info!("{}", self.config);
+        // Display the Docker configuration table
+        self.display_table();
 
         // Check if docker command exists
         if which::which("docker").is_err() {
