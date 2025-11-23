@@ -164,7 +164,7 @@ impl Runner {
     /// Build a base command for the given command args
     ///
     /// This returns a command configured for the specific runner environment.
-    /// The interpreter should then add environment variables, working directory, etc.
+    /// The interpreter should then add environment variables.
     ///
     /// # Arguments
     ///
@@ -180,7 +180,7 @@ impl Runner {
         work_dir: &Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
         match self {
-            Runner::Host(runner) => runner.build_command(command_args),
+            Runner::Host(runner) => runner.build_command(command_args, work_dir),
             Runner::Sandbox(runner) => runner.build_command(command_args, work_dir),
             Runner::Docker(runner, mounts) => {
                 runner.build_command_with_mounts(command_args, mounts, work_dir)
@@ -208,7 +208,7 @@ pub async fn run_with_replacement(
     work_dir: &Path,
     replacements: &HashMap<String, String>,
 ) -> Result<std::process::Output, std::io::Error> {
-    // Configure stdio - we need piped output for filtering and null stdin
+    // Configure stdio
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

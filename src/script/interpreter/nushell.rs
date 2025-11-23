@@ -120,11 +120,11 @@ impl Interpreter for NuShellInterpreter {
 
         let cmd_args = [nu_path.as_str(), build_script_path_str.as_str()];
 
-        // Build the command using the runner
+        // Build the command using the runner (working directory is set by the runner)
         let mut command = args.runner.build_command(&cmd_args, &args.work_dir)?;
 
-        // Add environment variables and working directory
-        command.current_dir(&args.work_dir).envs(&args.env_vars);
+        // Add environment variables
+        command.envs(&args.env_vars);
 
         // Execute the command with output filtering (stdio is configured by run_with_replacement)
         let output = crate::script::runner::run_with_replacement(
