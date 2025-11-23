@@ -1,5 +1,6 @@
 //! Sandbox runner - executes commands using rattler-sandbox
 
+use super::Runner;
 use crate::script::SandboxConfiguration;
 use std::path::{Path, PathBuf};
 
@@ -18,12 +19,10 @@ impl SandboxRunner {
     pub fn new(config: SandboxConfiguration) -> Self {
         Self { config }
     }
+}
 
-    /// Build a base command for sandbox execution
-    ///
-    /// Returns a tokio::process::Command configured for sandbox execution.
-    /// The caller should add environment variables, working directory, etc.
-    pub fn build_command(
+impl Runner for SandboxRunner {
+    fn build_command(
         &self,
         command_args: &[&str],
         work_dir: &Path,

@@ -1,14 +1,12 @@
 //! Host runner - executes commands directly on the host system
 
+use super::Runner;
+
 /// Runner that executes commands directly on the host system
 pub struct HostRunner;
 
-impl HostRunner {
-    /// Build a base command for host execution
-    ///
-    /// Returns a tokio::process::Command with the command, args, and working directory set.
-    /// The caller should add environment variables.
-    pub fn build_command(
+impl Runner for HostRunner {
+    fn build_command(
         &self,
         command_args: &[&str],
         work_dir: &std::path::Path,

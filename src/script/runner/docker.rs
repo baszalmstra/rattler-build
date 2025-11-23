@@ -101,22 +101,20 @@ impl DockerConfiguration {
 /// Runner that executes commands inside a Docker container
 pub struct DockerRunner {
     config: DockerConfiguration,
+    mounts: Vec<super::VolumeMount>,
 }
 
 impl DockerRunner {
-    /// Create a new Docker runner with the given configuration
-    pub fn new(config: DockerConfiguration) -> Self {
-        Self { config }
+    /// Create a new Docker runner with the given configuration and volume mounts
+    pub fn new(config: DockerConfiguration, mounts: Vec<super::VolumeMount>) -> Self {
+        Self { config, mounts }
     }
+}
 
-    /// Build a base command for Docker execution
-    ///
-    /// Returns a tokio::process::Command configured for Docker execution.
-    /// The caller should add environment variables.
-    pub fn build_command_with_mounts(
+impl super::Runner for DockerRunner {
+    fn build_command(
         &self,
         command_args: &[&str],
-        mounts: &[super::VolumeMount],
         work_dir: &std::path::Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
         tracing::info!("{}", self.config);
@@ -151,7 +149,7 @@ impl DockerRunner {
 
         // Mount necessary directories with appropriate access modes
         // We mount at the same paths to ensure scripts work without modification
-        for mount in mounts {
+        for mount in &self.mounts {
             let path_str = mount.path.to_string_lossy();
             command.arg("-v");
             let mount_spec = match mount.access_mode {

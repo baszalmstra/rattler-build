@@ -147,20 +147,11 @@ async fn execute_with_replacements(
     })
 }
 
-/// A runner ready for executing commands
+/// A runner for executing commands in different environments
 ///
-/// This enum holds the different runner implementations.
-/// The interpreter can use this to build commands and execute them.
-pub enum Runner {
-    /// Host runner
-    Host(HostRunner),
-    /// Sandbox runner
-    Sandbox(SandboxRunner),
-    /// Docker runner with volume mounts
-    Docker(DockerRunner, Vec<VolumeMount>),
-}
-
-impl Runner {
+/// This trait is implemented by different runner types (Host, Sandbox, Docker)
+/// to build commands for their specific execution environments.
+pub trait Runner: Send {
     /// Build a base command for the given command args
     ///
     /// This returns a command configured for the specific runner environment.
@@ -174,19 +165,11 @@ impl Runner {
     /// # Returns
     ///
     /// Returns a configured `tokio::process::Command`
-    pub fn build_command(
+    fn build_command(
         &self,
         command_args: &[&str],
         work_dir: &Path,
-    ) -> Result<tokio::process::Command, std::io::Error> {
-        match self {
-            Runner::Host(runner) => runner.build_command(command_args, work_dir),
-            Runner::Sandbox(runner) => runner.build_command(command_args, work_dir),
-            Runner::Docker(runner, mounts) => {
-                runner.build_command_with_mounts(command_args, mounts, work_dir)
-            }
-        }
-    }
+    ) -> Result<tokio::process::Command, std::io::Error>;
 }
 
 /// Execute a command with output streaming and string replacements

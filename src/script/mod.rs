@@ -60,8 +60,8 @@ pub struct ExecutionArgs {
     /// The working directory (`cwd`) in which the script should execute
     pub work_dir: PathBuf,
 
-    /// The prepared runner to use for script execution
-    pub runner: runner::Runner,
+    /// The runner to use for script execution
+    pub runner: Box<dyn runner::Runner>,
 
     /// Whether to enable debug output
     pub debug: Debug,
@@ -306,11 +306,11 @@ impl Script {
 
         tracing::debug!("Running script in {}", work_dir.display());
 
-        // Manually construct the runner from the configuration
-        let runner = match &runner_config {
-            RunnerConfiguration::Host => runner::Runner::Host(runner::HostRunner),
+        // Construct the appropriate runner from the configuration
+        let runner: Box<dyn runner::Runner> = match &runner_config {
+            RunnerConfiguration::Host => Box::new(runner::HostRunner),
             RunnerConfiguration::Sandbox(config) => {
-                runner::Runner::Sandbox(runner::SandboxRunner::new(config.clone()))
+                Box::new(runner::SandboxRunner::new(config.clone()))
             }
             RunnerConfiguration::Docker(config, _) => {
                 // Collect volume mounts with appropriate access modes
@@ -322,7 +322,7 @@ impl Script {
                 if let Some(build_prefix_ref) = build_prefix {
                     mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
                 }
-                runner::Runner::Docker(runner::DockerRunner::new(config.clone()), mounts)
+                Box::new(runner::DockerRunner::new(config.clone(), mounts))
             }
         };
 
@@ -397,9 +397,11 @@ impl Output {
 
         let work_dir = &self.build_configuration.directories.work_dir;
 
-        // Manually construct the runner based on configuration
+        // Construct the appropriate runner based on configuration
         // Docker takes priority if both are specified
-        let runner = if let Some(docker_config) = self.build_configuration.docker_config() {
+        let runner: Box<dyn runner::Runner> = if let Some(docker_config) =
+            self.build_configuration.docker_config()
+        {
             // Collect volume mounts with appropriate access modes
             use crate::script::runner::VolumeMount;
             let mut mounts = vec![
@@ -409,11 +411,11 @@ impl Output {
             if let Some(build_prefix_ref) = build_prefix {
                 mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
             }
-            runner::Runner::Docker(runner::DockerRunner::new(docker_config.clone()), mounts)
+            Box::new(runner::DockerRunner::new(docker_config.clone(), mounts))
         } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {
-            runner::Runner::Sandbox(runner::SandboxRunner::new(sandbox_config.clone()))
+            Box::new(runner::SandboxRunner::new(sandbox_config.clone()))
         } else {
-            runner::Runner::Host(runner::HostRunner)
+            Box::new(runner::HostRunner)
         };
 
         Ok(ExecutionArgs {
