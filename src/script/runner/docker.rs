@@ -1,10 +1,8 @@
 //! Docker runner - executes commands inside a Docker container
 
-use super::Runner;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use std::process::Stdio;
 
 /// CLI argument parser for Docker runner
 #[derive(Debug, Parser, Clone, Default)]
@@ -110,12 +108,16 @@ impl DockerRunner {
     pub fn new(config: DockerConfiguration) -> Self {
         Self { config }
     }
-}
 
-impl Runner for DockerRunner {
-    fn build_command(
+    /// Build a base command for Docker execution
+    ///
+    /// Returns a tokio::process::Command configured for Docker execution.
+    /// The caller should add environment variables.
+    pub fn build_command_with_mounts(
         &self,
-        context: &super::RunnerContext,
+        command_args: &[&str],
+        mounts: &[super::VolumeMount],
+        work_dir: &std::path::Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
         tracing::info!("{}", self.config);
 
@@ -147,15 +149,9 @@ impl Runner for DockerRunner {
             command.arg("--network=none");
         }
 
-        // Pass environment variables to the container
-        for (key, value) in context.env_vars {
-            command.arg("-e");
-            command.arg(format!("{}={}", key, value));
-        }
-
         // Mount necessary directories with appropriate access modes
         // We mount at the same paths to ensure scripts work without modification
-        for mount in context.mounts {
+        for mount in mounts {
             let path_str = mount.path.to_string_lossy();
             command.arg("-v");
             let mount_spec = match mount.access_mode {
@@ -167,18 +163,13 @@ impl Runner for DockerRunner {
 
         // Set working directory in container to match host
         command.arg("-w");
-        command.arg(context.work_dir.to_string_lossy().to_string());
+        command.arg(work_dir.to_string_lossy().to_string());
 
         // Specify the image
         command.arg(&self.config.image);
 
         // Add the command to execute
-        command.args(context.command_args);
-
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        command.args(command_args);
 
         Ok(command)
     }

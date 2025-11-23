@@ -257,8 +257,7 @@ impl Output {
                     &self.build_configuration.directories.host_prefix,
                     build_prefix,
                     Some(jinja),
-                    None, // sandbox config
-                    None, // docker config
+                    crate::script::RunnerConfiguration::Host,
                     self.build_configuration.debug,
                 )
                 .await

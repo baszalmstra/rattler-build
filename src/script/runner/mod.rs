@@ -9,7 +9,6 @@ pub use host::HostRunner;
 pub use sandbox::SandboxRunner;
 
 use crate::script::SandboxConfiguration;
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -50,40 +49,6 @@ impl VolumeMount {
             access_mode: VolumeAccessMode::ReadWrite,
         }
     }
-}
-
-/// Context for running a command in a specific execution environment
-#[derive(Debug)]
-pub struct RunnerContext<'a> {
-    /// The command and its arguments to execute
-    pub command_args: &'a [&'a str],
-    /// The working directory for the command
-    pub work_dir: &'a Path,
-    /// Environment variables to set for the command
-    pub env_vars: &'a IndexMap<String, String>,
-    /// Volume mounts with their access modes
-    pub mounts: &'a [VolumeMount],
-}
-
-/// Trait for different script execution runners
-///
-/// A runner is responsible for building a command configured for a specific execution
-/// environment (e.g., on the host, in a sandbox, or in a docker container).
-pub trait Runner {
-    /// Build a command ready for execution in the specific environment
-    ///
-    /// # Arguments
-    ///
-    /// * `context` - The context containing command args, working directory, and environment variables
-    ///
-    /// # Returns
-    ///
-    /// Returns a configured `tokio::process::Command` ready to be spawned,
-    /// or an error if the command cannot be built (e.g., required tool not found)
-    fn build_command(
-        &self,
-        context: &RunnerContext,
-    ) -> Result<tokio::process::Command, std::io::Error>;
 }
 
 /// Execute a command with output streaming and string replacements
@@ -182,44 +147,67 @@ async fn execute_with_replacements(
     })
 }
 
-/// A prepared runner ready for executing commands
+/// A runner ready for executing commands
 ///
-/// This holds a runner instance along with any associated configuration (like volume mounts).
-/// The interpreter can use this to execute one or more commands in the same execution environment.
-pub struct PreparedRunner {
-    runner: Box<dyn Runner + Send + Sync>,
-    mounts: Vec<VolumeMount>,
+/// This enum holds the different runner implementations.
+/// The interpreter can use this to build commands and execute them.
+pub enum Runner {
+    /// Host runner
+    Host(HostRunner),
+    /// Sandbox runner
+    Sandbox(SandboxRunner),
+    /// Docker runner with volume mounts
+    Docker(DockerRunner, Vec<VolumeMount>),
 }
 
-impl PreparedRunner {
-    /// Execute a command in this runner's environment
+impl Runner {
+    /// Build a base command for the given command args
+    ///
+    /// This returns a command configured for the specific runner environment.
+    /// The interpreter should then add environment variables, working directory, etc.
     ///
     /// # Arguments
     ///
     /// * `command_args` - The command and its arguments to execute
     /// * `work_dir` - The working directory for the command
-    /// * `env_vars` - Environment variables to set for the command
-    /// * `replacements` - String replacements to apply to output (for path masking, secret redaction)
     ///
     /// # Returns
     ///
-    /// Returns the output of the command execution
-    pub async fn execute_command(
+    /// Returns a configured `tokio::process::Command`
+    pub fn build_command(
         &self,
         command_args: &[&str],
         work_dir: &Path,
-        env_vars: &IndexMap<String, String>,
-        replacements: &HashMap<String, String>,
-    ) -> Result<std::process::Output, std::io::Error> {
-        let context = RunnerContext {
-            command_args,
-            work_dir,
-            env_vars,
-            mounts: &self.mounts,
-        };
-        let command = self.runner.build_command(&context)?;
-        execute_with_replacements(command, work_dir, replacements).await
+    ) -> Result<tokio::process::Command, std::io::Error> {
+        match self {
+            Runner::Host(runner) => runner.build_command(command_args),
+            Runner::Sandbox(runner) => runner.build_command(command_args, work_dir),
+            Runner::Docker(runner, mounts) => {
+                runner.build_command_with_mounts(command_args, mounts, work_dir)
+            }
+        }
     }
+}
+
+/// Execute a command with output streaming and string replacements
+///
+/// This is exposed for interpreters to use after building their command.
+///
+/// # Arguments
+///
+/// * `command` - The command to execute
+/// * `work_dir` - The working directory for logging
+/// * `replacements` - String replacements to apply to output (for path masking, secret redaction)
+///
+/// # Returns
+///
+/// Returns the output of the command execution
+pub async fn run_with_replacement(
+    command: tokio::process::Command,
+    work_dir: &Path,
+    replacements: &HashMap<String, String>,
+) -> Result<std::process::Output, std::io::Error> {
+    execute_with_replacements(command, work_dir, replacements).await
 }
 
 /// Configuration for selecting and configuring a runner
@@ -234,24 +222,6 @@ pub enum RunnerConfiguration {
 }
 
 impl RunnerConfiguration {
-    /// Prepare a runner from this configuration
-    ///
-    /// This creates the actual runner instance that can be used to execute commands.
-    pub fn prepare_runner(&self) -> PreparedRunner {
-        let runner = match self {
-            RunnerConfiguration::Host => Box::new(HostRunner) as Box<dyn Runner + Send + Sync>,
-            RunnerConfiguration::Sandbox(config) => Box::new(SandboxRunner::new(config.clone())),
-            RunnerConfiguration::Docker(config, _) => Box::new(DockerRunner::new(config.clone())),
-        };
-
-        let mounts = match self {
-            RunnerConfiguration::Docker(_, mounts) => mounts.clone(),
-            _ => Vec::new(),
-        };
-
-        PreparedRunner { runner, mounts }
-    }
-
     /// Check if this is a host runner
     pub fn is_host(&self) -> bool {
         matches!(self, RunnerConfiguration::Host)

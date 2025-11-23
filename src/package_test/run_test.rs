@@ -142,8 +142,7 @@ impl Tests {
                         environment,
                         None,
                         None,
-                        None,
-                        None,
+                        crate::script::RunnerConfiguration::Host,
                         Debug::new(false),
                     )
                     .await
@@ -164,8 +163,7 @@ impl Tests {
                         environment,
                         None,
                         None,
-                        None,
-                        None,
+                        crate::script::RunnerConfiguration::Host,
                         Debug::new(false),
                     )
                     .await
@@ -649,8 +647,7 @@ impl PythonTest {
                 &test_prefix,
                 None,
                 None,
-                None,
-                None,
+                crate::script::RunnerConfiguration::Host,
                 config.debug,
             )
             .await
@@ -674,8 +671,7 @@ impl PythonTest {
                     &test_prefix,
                     None,
                     None,
-                    None,
-                    None,
+                    crate::script::RunnerConfiguration::Host,
                     config.debug,
                 )
                 .await
@@ -752,8 +748,7 @@ impl PerlTest {
                 &test_prefix,
                 None,
                 None,
-                None,
-                None,
+                crate::script::RunnerConfiguration::Host,
                 config.debug,
             )
             .await
@@ -865,8 +860,7 @@ impl CommandsTest {
                 &run_prefix,
                 build_prefix.as_ref(),
                 None,
-                None,
-                None,
+                crate::script::RunnerConfiguration::Host,
                 config.debug,
             )
             .await
@@ -1029,8 +1023,7 @@ impl RTest {
                 &test_prefix,
                 None,
                 None,
-                None,
-                None,
+                crate::script::RunnerConfiguration::Host,
                 config.debug,
             )
             .await
@@ -1102,8 +1095,7 @@ impl RubyTest {
                 &test_prefix,
                 None,
                 None,
-                None,
-                None,
+                crate::script::RunnerConfiguration::Host,
                 config.debug,
             )
             .await

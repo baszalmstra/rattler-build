@@ -61,7 +61,7 @@ pub struct ExecutionArgs {
     pub work_dir: PathBuf,
 
     /// The prepared runner to use for script execution
-    pub runner: runner::PreparedRunner,
+    pub runner: runner::Runner,
 
     /// Whether to enable debug output
     pub debug: Debug,
@@ -255,8 +255,7 @@ impl Script {
         run_prefix: &Path,
         build_prefix: Option<&PathBuf>,
         mut jinja_config: Option<Jinja>,
-        sandbox_config: Option<&SandboxConfiguration>,
-        docker_config: Option<&DockerConfiguration>,
+        runner_config: RunnerConfiguration,
         debug: Debug,
     ) -> Result<(), InterpreterError> {
         // Determine the valid script extensions based on the available interpreters.
@@ -307,27 +306,25 @@ impl Script {
 
         tracing::debug!("Running script in {}", work_dir.display());
 
-        // Create runner_config based on docker_config or sandbox_config
-        // Docker takes priority if both are specified
-        let runner_config = if let Some(docker_config) = docker_config {
-            // Collect volume mounts with appropriate access modes
-            use crate::script::runner::VolumeMount;
-            let mut mounts = vec![
-                VolumeMount::read_write(run_prefix.to_path_buf()),
-                VolumeMount::read_write(work_dir.clone()),
-            ];
-            if let Some(build_prefix_ref) = build_prefix {
-                mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
+        // Manually construct the runner from the configuration
+        let runner = match &runner_config {
+            RunnerConfiguration::Host => runner::Runner::Host(runner::HostRunner),
+            RunnerConfiguration::Sandbox(config) => {
+                runner::Runner::Sandbox(runner::SandboxRunner::new(config.clone()))
             }
-            RunnerConfiguration::Docker(docker_config.clone(), mounts)
-        } else if let Some(config) = sandbox_config {
-            RunnerConfiguration::Sandbox(config.clone())
-        } else {
-            RunnerConfiguration::Host
+            RunnerConfiguration::Docker(config, _) => {
+                // Collect volume mounts with appropriate access modes
+                use crate::script::runner::VolumeMount;
+                let mut mounts = vec![
+                    VolumeMount::read_write(run_prefix.to_path_buf()),
+                    VolumeMount::read_write(work_dir.clone()),
+                ];
+                if let Some(build_prefix_ref) = build_prefix {
+                    mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
+                }
+                runner::Runner::Docker(runner::DockerRunner::new(config.clone()), mounts)
+            }
         };
-
-        // Prepare the runner from the configuration
-        let runner = runner_config.prepare_runner();
 
         let exec_args = ExecutionArgs {
             script: contents,
@@ -400,9 +397,9 @@ impl Output {
 
         let work_dir = &self.build_configuration.directories.work_dir;
 
-        // Create runner_config based on docker_config or sandbox_config
+        // Manually construct the runner based on configuration
         // Docker takes priority if both are specified
-        let runner_config = if let Some(docker_config) = self.build_configuration.docker_config() {
+        let runner = if let Some(docker_config) = self.build_configuration.docker_config() {
             // Collect volume mounts with appropriate access modes
             use crate::script::runner::VolumeMount;
             let mut mounts = vec![
@@ -412,15 +409,12 @@ impl Output {
             if let Some(build_prefix_ref) = build_prefix {
                 mounts.push(VolumeMount::read_only(build_prefix_ref.clone()));
             }
-            RunnerConfiguration::Docker(docker_config.clone(), mounts)
+            runner::Runner::Docker(runner::DockerRunner::new(docker_config.clone()), mounts)
         } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {
-            RunnerConfiguration::Sandbox(sandbox_config.clone())
+            runner::Runner::Sandbox(runner::SandboxRunner::new(sandbox_config.clone()))
         } else {
-            RunnerConfiguration::Host
+            runner::Runner::Host(runner::HostRunner)
         };
-
-        // Prepare the runner from the configuration
-        let runner = runner_config.prepare_runner();
 
         Ok(ExecutionArgs {
             script: self.recipe.build().script().resolve_content(
@@ -465,6 +459,15 @@ impl Output {
             Some(&self.build_configuration.directories.build_prefix)
         };
 
+        // Create runner configuration based on build configuration
+        let runner_config = if let Some(docker_config) = self.build_configuration.docker_config() {
+            RunnerConfiguration::Docker(docker_config.clone(), Vec::new())
+        } else if let Some(sandbox_config) = self.build_configuration.sandbox_config() {
+            RunnerConfiguration::Sandbox(sandbox_config.clone())
+        } else {
+            RunnerConfiguration::Host
+        };
+
         self.recipe
             .build()
             .script()
@@ -482,8 +485,7 @@ impl Output {
                     Jinja::new(self.build_configuration.selector_config())
                         .with_context(&self.recipe.context),
                 ),
-                self.build_configuration.sandbox_config(),
-                self.build_configuration.docker_config(),
+                runner_config,
                 self.build_configuration.debug,
             )
             .await?;

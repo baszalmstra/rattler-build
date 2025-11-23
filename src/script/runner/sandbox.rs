@@ -1,9 +1,7 @@
 //! Sandbox runner - executes commands using rattler-sandbox
 
-use super::{Runner, RunnerContext};
 use crate::script::SandboxConfiguration;
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
 
 /// Find the rattler-sandbox executable in PATH
 fn find_rattler_sandbox() -> Option<PathBuf> {
@@ -20,12 +18,15 @@ impl SandboxRunner {
     pub fn new(config: SandboxConfiguration) -> Self {
         Self { config }
     }
-}
 
-impl Runner for SandboxRunner {
-    fn build_command(
+    /// Build a base command for sandbox execution
+    ///
+    /// Returns a tokio::process::Command configured for sandbox execution.
+    /// The caller should add environment variables, working directory, etc.
+    pub fn build_command(
         &self,
-        context: &RunnerContext,
+        command_args: &[&str],
+        work_dir: &Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
         tracing::info!("{}", self.config);
 
@@ -42,22 +43,12 @@ impl Runner for SandboxRunner {
         let mut command = tokio::process::Command::new(sandbox_exe);
 
         // Add sandbox configuration arguments
-        let sandbox_args = self.config.with_cwd(context.work_dir).to_args();
+        let sandbox_args = self.config.with_cwd(work_dir).to_args();
         command.args(&sandbox_args);
 
         // Add the actual command to execute (as positional arguments)
-        command.arg(context.command_args[0]);
-        command.args(&context.command_args[1..]);
-
-        command
-            .current_dir(context.work_dir)
-            // when using `pixi global install bash` the current work dir
-            // causes some strange issues that are fixed when setting the `PWD`
-            .env("PWD", context.work_dir)
-            .envs(context.env_vars)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        command.arg(command_args[0]);
+        command.args(&command_args[1..]);
 
         Ok(command)
     }

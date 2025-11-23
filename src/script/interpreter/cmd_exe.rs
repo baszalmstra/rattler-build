@@ -64,16 +64,25 @@ impl Interpreter for CmdExeInterpreter {
             return Err(InterpreterError::Debug(print_debug_info(&args)));
         }
 
-        // Execute the command using the prepared runner
-        let output = args
-            .runner
-            .execute_command(
-                &cmd_args,
-                &args.work_dir,
-                &args.env_vars,
-                &args.replacements("%((var))%"),
-            )
-            .await?;
+        // Build the command using the runner
+        let mut command = args.runner.build_command(&cmd_args, &args.work_dir)?;
+
+        // Add environment variables, working directory, and stdio
+        command
+            .current_dir(&args.work_dir)
+            .env("PWD", &args.work_dir)
+            .envs(&args.env_vars)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        // Execute the command with output filtering
+        let output = crate::script::runner::run_with_replacement(
+            command,
+            &args.work_dir,
+            &args.replacements("%((var))%"),
+        )
+        .await?;
 
         if !output.status.success() {
             let status_code = output.status.code().unwrap_or(1);
