@@ -192,6 +192,7 @@ impl Runner {
 /// Execute a command with output streaming and string replacements
 ///
 /// This is exposed for interpreters to use after building their command.
+/// It configures stdio (stdin=null, stdout/stderr=piped) and applies output filtering.
 ///
 /// # Arguments
 ///
@@ -203,10 +204,16 @@ impl Runner {
 ///
 /// Returns the output of the command execution
 pub async fn run_with_replacement(
-    command: tokio::process::Command,
+    mut command: tokio::process::Command,
     work_dir: &Path,
     replacements: &HashMap<String, String>,
 ) -> Result<std::process::Output, std::io::Error> {
+    // Configure stdio - we need piped output for filtering and null stdin
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
     execute_with_replacements(command, work_dir, replacements).await
 }
 

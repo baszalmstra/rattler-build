@@ -70,16 +70,10 @@ impl Interpreter for BashInterpreter {
         // Build the command using the runner
         let mut command = args.runner.build_command(&cmd_args, &args.work_dir)?;
 
-        // Add environment variables, working directory, and stdio
-        command
-            .current_dir(&args.work_dir)
-            .env("PWD", &args.work_dir)
-            .envs(&args.env_vars)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        // Add environment variables and working directory
+        command.current_dir(&args.work_dir).envs(&args.env_vars);
 
-        // Execute the command with output filtering
+        // Execute the command with output filtering (stdio is configured by run_with_replacement)
         let output = crate::script::runner::run_with_replacement(
             command,
             &args.work_dir,
