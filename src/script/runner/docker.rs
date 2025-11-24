@@ -1,7 +1,6 @@
 //! Docker runner - executes commands inside a Docker container
 
 use clap::Parser;
-use comfy_table::Table;
 use serde::{Deserialize, Serialize};
 
 /// CLI argument parser for Docker runner
@@ -93,29 +92,15 @@ impl DockerRunner {
         Self { config, mounts }
     }
 
-    /// Display the Docker configuration as a table
-    fn display_table(&self) {
-        let mut table = Table::new();
-        table
-            .load_preset(comfy_table::presets::UTF8_FULL_CONDENSED)
-            .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+    /// Display the Docker configuration
+    fn display_info(&self) {
+        tracing::info!("{} Docker Build Environment", console::Emoji("🐳", ""));
 
-        // Add header
-        table.add_row(vec![format!(
-            "{} Docker Build Environment",
-            console::Emoji("🐳", "")
-        )]);
-
-        // Add separator
-        table.add_row(vec![""]);
-
-        // Add image
-        table.add_row(vec![format!(
+        tracing::info!(
             "Image: {}",
             console::style(&self.config.image).cyan().bold()
-        )]);
+        );
 
-        // Add network status
         let network_status = if self.config.allow_network {
             console::style("Enabled").green().to_string()
         } else {
@@ -123,15 +108,9 @@ impl DockerRunner {
                 .dim()
                 .to_string()
         };
-        table.add_row(vec![format!("Network: {}", network_status)]);
+        tracing::info!("Network: {}", network_status);
 
-        // Add empty row for spacing
-        table.add_row(vec![""]);
-
-        // Add volume mounts header
-        table.add_row(vec!["Volume Mounts:"]);
-
-        // Add each mount
+        tracing::info!("Volume Mounts:");
         for mount in &self.mounts {
             let path_display = if let Some(label) = &mount.label {
                 console::style(label).cyan().to_string()
@@ -148,18 +127,8 @@ impl DockerRunner {
                 }
             };
 
-            table.add_row(vec![format!(
-                "  {} {} {}",
-                console::Emoji("•", "-"),
-                path_display,
-                access
-            )]);
+            tracing::info!("  {} {} {}", console::Emoji("•", "-"), path_display, access);
         }
-
-        // Add empty row for spacing
-        table.add_row(vec![""]);
-
-        tracing::info!("\n{}", table);
     }
 }
 
@@ -169,8 +138,8 @@ impl super::Runner for DockerRunner {
         command_args: &[&str],
         work_dir: &std::path::Path,
     ) -> Result<tokio::process::Command, std::io::Error> {
-        // Display the Docker configuration table
-        self.display_table();
+        // Display the Docker configuration
+        self.display_info();
 
         // Check if docker command exists
         if which::which("docker").is_err() {
