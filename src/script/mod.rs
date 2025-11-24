@@ -536,6 +536,15 @@ impl Output {
             let script = format!("{}\n{}", preamble, exec_args.script.script());
             tokio::fs::write(&build_script_path, script).await?;
 
+            // Mark build_env.sh and conda_build.sh as executable
+            #[cfg(unix)]
+            {
+                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+                tokio::fs::set_permissions(&build_env_path, Permissions::from_mode(0o755)).await?;
+                tokio::fs::set_permissions(&build_script_path, Permissions::from_mode(0o755))
+                    .await?;
+            }
+
             tracing::info!("Build script created at {}", build_script_path.display());
         } else if interpreter == "cmd" {
             let script = CmdExeInterpreter
