@@ -101,19 +101,19 @@ impl DockerRunner {
             .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
 
         // Add header
-        table.add_row(vec![
-            "",
-            &format!("{} Docker Build Environment", console::Emoji("🐳", "")),
-        ]);
+        table.add_row(vec![format!(
+            "{} Docker Build Environment",
+            console::Emoji("🐳", "")
+        )]);
 
         // Add separator
-        table.add_row(vec!["", ""]);
+        table.add_row(vec![""]);
 
         // Add image
-        table.add_row(vec![
-            "Image:",
-            &console::style(&self.config.image).cyan().bold().to_string(),
-        ]);
+        table.add_row(vec![format!(
+            "Image: {}",
+            console::style(&self.config.image).cyan().bold()
+        )]);
 
         // Add network status
         let network_status = if self.config.allow_network {
@@ -123,13 +123,13 @@ impl DockerRunner {
                 .dim()
                 .to_string()
         };
-        table.add_row(vec!["Network:", &network_status]);
+        table.add_row(vec![format!("Network: {}", network_status)]);
 
         // Add empty row for spacing
-        table.add_row(vec!["", ""]);
+        table.add_row(vec![""]);
 
         // Add volume mounts header
-        table.add_row(vec!["Volume Mounts:", ""]);
+        table.add_row(vec!["Volume Mounts:"]);
 
         // Add each mount
         for mount in &self.mounts {
@@ -148,14 +148,16 @@ impl DockerRunner {
                 }
             };
 
-            table.add_row(vec![
-                &format!("  {}", console::Emoji("•", "-")),
-                &format!("{} {}", path_display, access),
-            ]);
+            table.add_row(vec![format!(
+                "  {} {} {}",
+                console::Emoji("•", "-"),
+                path_display,
+                access
+            )]);
         }
 
         // Add empty row for spacing
-        table.add_row(vec!["", ""]);
+        table.add_row(vec![""]);
 
         tracing::info!("\n{}", table);
     }
