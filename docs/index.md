@@ -111,6 +111,34 @@ use ~/.cache/rattler-build/completions.nu *
 echo 'eval (rattler-build completion --shell elvish | slurp)' >> ~/.elvish/rc.elv
 ```
 
+### Command Suggestions
+
+When you mistype a subcommand, `rattler-build` will suggest similar valid commands to help you quickly correct your input:
+
+```shell
+$ rattler-build tst
+error: unrecognized subcommand 'tst'
+
+  tip: a similar subcommand exists: 'test'
+
+Usage: rattler-build [OPTIONS] [COMMAND]
+
+For more information, try '--help'.
+```
+
+This works for partial matches too:
+
+```shell
+$ rattler-build buil
+error: unrecognized subcommand 'buil'
+
+  tip: some similar subcommands exist: 'build', 'rebuild'
+
+Usage: rattler-build [OPTIONS] [COMMAND]
+
+For more information, try '--help'.
+```
+
 ### Dependencies
 
 Currently `rattler-build` needs some dependencies on the host system which are
