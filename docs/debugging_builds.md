@@ -209,6 +209,62 @@ rattler-build makes packages relocatable through:
 
 **Important**: The placeholder is a long string (`placehold_placehol_...`). If your code has small buffer optimization or assumes static string lengths for file paths, you may need to adjust it. The `$PREFIX` length will differ at installation time. The placeholder replacement in binary files will overwrite the placeholder string, move the remainder until `\0` is found in the original string, and pad with `\0` bytes.
 
+## Inspecting Built Packages
+
+After building a package, you can inspect its contents without extracting it using the `package inspect` command:
+
+```bash
+# Basic inspection - shows package metadata and dependencies
+rattler-build package inspect output/linux-64/mypackage-1.0-h1234_0.conda
+
+# Show all files in the package with sizes and hashes
+rattler-build package inspect output/linux-64/mypackage-1.0-h1234_0.conda --paths
+
+# Show all available information
+rattler-build package inspect output/linux-64/mypackage-1.0-h1234_0.conda --all
+
+# Output as JSON for scripting
+rattler-build package inspect output/linux-64/mypackage-1.0-h1234_0.conda --json
+```
+
+This is useful for:
+
+- **Verifying package contents** - Check that expected files are included
+- **Checking dependencies** - Verify runtime dependencies are correct
+- **Debugging prefix issues** - The `--paths` flag shows which files have prefix placeholders and whether they're binary or text
+- **Comparing packages** - Use `--json` output to diff two package versions
+
+### Example Output
+
+```bash
+$ rattler-build package inspect mypackage-1.0-h1234_0.conda
+```
+
+The output shows a properties table with:
+
+| Property | Description |
+|----------|-------------|
+| Name | Package name |
+| Version | Package version |
+| Build | Build string |
+| Build number | Build number |
+| Subdir | Target platform (e.g., `linux-64`) |
+| Timestamp | When the package was built |
+| License | Package license |
+| Summary | Brief description |
+
+Followed by a dependencies table listing all runtime requirements.
+
+With `--paths`, you also get a files table showing:
+
+| Column | Description |
+|--------|-------------|
+| Path | File path within the package |
+| Size | File size |
+| Type | `file`, `symlink`, or `dir` |
+| Prefix | `binary`, `text`, or `-` (indicates if prefix replacement is needed) |
+| SHA256 | File hash for verification |
+
 ## Useful Commands Reference
 
 ```bash
@@ -228,4 +284,9 @@ rattler-build create-patch --directory . --name fix --add "*.txt" --dry-run
 
 # Test commands
 rattler-build test --package-file output/linux-64/mypackage-1.0.tar.bz2
+
+# Inspect commands
+rattler-build package inspect output/linux-64/mypackage-1.0.conda
+rattler-build package inspect output/linux-64/mypackage-1.0.conda --paths
+rattler-build package inspect output/linux-64/mypackage-1.0.conda --all --json
 ```
