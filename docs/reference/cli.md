@@ -19,6 +19,7 @@ This document contains the help content for the `rattler-build` command-line pro
 * `debug` — Debug a recipe by setting up the environment without running the build script
 * `create-patch` — Create a patch for a directory
 * `debug-shell` — Open a debug shell in the build environment
+* `package` — Package-related subcommands
 
 ##### **Options:**
 
@@ -1313,6 +1314,63 @@ Open a debug shell in the build environment
 	Output directory containing rattler-build-log.txt
 
 	- Default value: `./output`
+
+
+
+
+### `package`
+
+Package-related subcommands
+
+**Usage:** `rattler-build package <COMMAND>`
+
+##### **Subcommands:**
+
+* `inspect` — Inspect and display information about a built package
+
+
+
+#### `inspect`
+
+Inspect and display information about a built package.
+
+This command reads metadata directly from package archives (`.conda` or `.tar.bz2`) without extracting them. It displays package properties, dependencies, and optionally file listings and run exports.
+
+**Usage:** `rattler-build package inspect [OPTIONS] <PACKAGE_FILE>`
+
+##### **Arguments:**
+
+- `<PACKAGE_FILE>`
+
+	Path to the package file (`.conda` or `.tar.bz2`)
+
+
+
+##### **Options:**
+
+- `--paths`
+
+	Show detailed file listing with paths, sizes, types, prefix placeholders, and SHA256 hashes
+
+
+- `--about`
+
+	Show extended about information (license, summary, description, URLs)
+
+
+- `--run-exports`
+
+	Show run exports configuration
+
+
+- `--all`
+
+	Show all available information (equivalent to `--paths --about --run-exports`)
+
+
+- `--json`
+
+	Output as JSON for programmatic use
 
 
 
