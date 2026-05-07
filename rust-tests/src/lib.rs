@@ -480,6 +480,39 @@ mod tests {
     }
 
     #[test]
+    fn test_package_files_override() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        let tmp = tmp("test_package_files_override");
+        let rattler_build = rattler().build(
+            recipes().join("package_files_override"),
+            tmp.as_dir(),
+            None,
+            None,
+        );
+
+        assert!(rattler_build.status.success());
+
+        let pkg = get_extracted_package(tmp.as_dir(), "package_files_override");
+        // The override list contained two paths; nothing else should be in the package.
+        assert!(pkg.join("bin/keep.sh").exists());
+        assert!(pkg.join("bin/also-keep.sh").exists());
+        assert!(!pkg.join("bin/skip.sh").exists());
+        assert!(!pkg.join("share/doc/skip.txt").exists());
+
+        let paths_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(pkg.join("info/paths.json")).unwrap()).unwrap();
+        let listed = paths_json["paths"].as_array().unwrap();
+        let mut listed_paths: Vec<String> = listed
+            .iter()
+            .map(|e| e["_path"].as_str().unwrap().to_string())
+            .collect();
+        listed_paths.sort();
+        assert_eq!(listed_paths, vec!["bin/also-keep.sh", "bin/keep.sh"]);
+    }
+
+    #[test]
     fn test_files_copy() {
         if cfg!(target_os = "windows") {
             return;
