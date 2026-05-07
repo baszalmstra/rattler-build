@@ -419,8 +419,10 @@ impl Output {
             .build_configuration
             .directories
             .package_files_list_path();
-        if package_files_path.exists() {
-            fs_err::remove_file(&package_files_path)?;
+        match fs_err::remove_file(&package_files_path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
         }
 
         let exec_args = self.prepare_build_script().await?;
