@@ -46,6 +46,32 @@ any job and dispatched runs all report main's `head_sha`.
    full 14-node graph — dominated by dispatch→pickup latency per hop, which
    is itself one of the measurements.
 
+## Findings from the live run (2026-07-14, baszalmstra/rattler-build fork)
+
+The full 14-node DAG completed green. Key empirical results:
+
+1. **The pure event loop does NOT work with `GITHUB_TOKEN`.** Runs created
+   via a GITHUB_TOKEN `workflow_dispatch` complete without emitting
+   `workflow_run` events (recursion guard) — wave 1 built, then the DAG went
+   silent. Fixes: (a) loop inside the scheduler + self-dispatch continuation
+   (implemented here; costs one runner for the DAG duration), (b) dispatch
+   with a PAT/App token, which re-enables true event-driven operation, or
+   (c) trusted-pushes-only repos can skip the scheduler and let each build
+   job dispatch its children directly.
+2. **Title-based provenance is mandatory, not optional.** Dispatched runs
+   report the default branch's `head_sha`, which moved mid-DAG when the
+   scheduler fix landed — sha-based artifact matching would have broken.
+3. **Artifact-as-completion-marker beats run completion**: `eqapp` was
+   dispatched 1s after `eq2`'s artifact appeared, before `eq2`'s run had
+   even finished.
+4. **Zero duplicate dispatches** (14 nodes, exactly 14 runs) — a single
+   looping scheduler serializes dispatch decisions by construction; the
+   idempotency gate remains as belt-and-braces.
+5. **Memoization works**: the re-kicked scheduler skipped the 3 root nodes
+   already built under the same namespace sha.
+6. **Throughput**: 11 nodes / 4 dependency waves in 2m51s; per-wave latency
+   ~35–40s (30s sweep interval + ~10s dispatch→pickup).
+
 ## Validation checklist
 
 | # | Question | How to check | Pass looks like |

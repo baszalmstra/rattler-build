@@ -97,19 +97,20 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Sweep
+      # EMPIRICAL FINDING (validated 2026-07-14 on a live run): completions of
+      # runs created via a GITHUB_TOKEN workflow_dispatch do NOT emit
+      # workflow_run events (recursion guard) - the dispatch exception creates
+      # the run, but that run's completion cannot re-trigger this scheduler. A
+      # pure event loop therefore needs a PAT/App token for dispatching. To
+      # stay GITHUB_TOKEN-only, this scheduler LOOPS: sweep, sleep, re-sweep
+      # until the DAG completes or stalls, self-dispatching a continuation run
+      # at the iteration cap (GITHUB_TOKEN self-dispatch does create runs -
+      # empirically proven). Cost: one runner busy for the DAG duration.
+      - name: Sweep loop
         if: steps.graph.outputs.found == 'true'
         env:
           SHA: ${{ steps.sha.outputs.sha }}
         run: |
-          # In-flight Build Node runs (queued/waiting/in_progress), by title.
-          gh run list --workflow "Build Node" --limit 100 \
-            --json displayTitle,status \
-            --jq '.[] | select(.status != "completed") | .displayTitle' > inflight.txt || true
-
-          # Memoized "is this node's package artifact present" check, so each
-          # node is queried at most once per sweep (API budget: GITHUB_TOKEN
-          # gets ~1000 req/h/repo).
           declare -A BUILT
           is_built() {
             local n="$1"
@@ -123,36 +124,69 @@ jobs:
             [ "${BUILT[$n]}" = "yes" ]
           }
 
-          total=0 done_ct=0 dispatched=0
-          for node in $(jq -r '.nodes[].id' graph.rendered.json); do
-            total=$((total + 1))
-            if is_built "$node"; then
-              done_ct=$((done_ct + 1))
-              continue
-            fi
-            title="build $node @ $SHA"
-            if grep -qxF "$title" inflight.txt; then
-              echo "in flight:  $node"
-              continue
-            fi
-            ready=true
-            while IFS= read -r parent; do
-              [ -n "$parent" ] || continue
-              if ! is_built "$parent"; then
-                ready=false
-                break
-              fi
-            done < <(jq -r --arg n "$node" '.edges[] | select(.to == $n) | .from' graph.rendered.json)
-            if $ready; then
-              echo "dispatching: $node"
-              gh workflow run build-node.yml --ref "$GITHUB_REF_NAME" -f node_id="$node" -f sha="$SHA"
-              dispatched=$((dispatched + 1))
-            else
-              echo "blocked:    $node (waiting on parents)"
-            fi
-          done
+          iter=0 stalls=0
+          while :; do
+            iter=$((iter + 1))
+            # In-flight Build Node runs (queued/waiting/in_progress), by title.
+            gh run list --workflow "Build Node" --limit 100 \
+              --json displayTitle,status \
+              --jq '.[] | select(.status != "completed") | .displayTitle' > inflight.txt || true
+            # Reset the per-sweep memo; artifacts only ever appear, never
+            # disappear, but we must observe new ones each iteration.
+            BUILT=()
 
-          echo "progress: $done_ct/$total built, $dispatched dispatched this sweep"
-          if [ "$done_ct" = "$total" ]; then
-            echo "::notice::DAG complete for $SHA"
-          fi
+            total=0 done_ct=0 dispatched=0
+            for node in $(jq -r '.nodes[].id' graph.rendered.json); do
+              total=$((total + 1))
+              title="build $node @ $SHA"
+              # Check in-flight BEFORE hitting the artifacts API: running nodes
+              # are the common case mid-DAG and this keeps the API budget low
+              # (GITHUB_TOKEN gets ~1000 req/h/repo).
+              if grep -qxF "$title" inflight.txt; then
+                echo "in flight:  $node"
+                continue
+              fi
+              if is_built "$node"; then
+                done_ct=$((done_ct + 1))
+                continue
+              fi
+              ready=true
+              while IFS= read -r parent; do
+                [ -n "$parent" ] || continue
+                if ! is_built "$parent"; then
+                  ready=false
+                  break
+                fi
+              done < <(jq -r --arg n "$node" '.edges[] | select(.to == $n) | .from' graph.rendered.json)
+              if $ready; then
+                echo "dispatching: $node"
+                gh workflow run build-node.yml --ref "$GITHUB_REF_NAME" -f node_id="$node" -f sha="$SHA"
+                dispatched=$((dispatched + 1))
+              else
+                echo "blocked:    $node (waiting on parents)"
+              fi
+            done
+
+            inflight_ct=$(grep -c . inflight.txt || true)
+            echo "sweep $iter: $done_ct/$total built, $dispatched dispatched, $inflight_ct in flight"
+
+            if [ "$done_ct" = "$total" ]; then
+              echo "::notice::DAG complete for $SHA"
+              exit 0
+            fi
+            if [ "$dispatched" = 0 ] && [ "$inflight_ct" = 0 ]; then
+              stalls=$((stalls + 1))
+              if [ "$stalls" -ge 3 ]; then
+                echo "::warning::DAG stalled at $done_ct/$total for $SHA (failed parent?). Re-run the failed node, then re-dispatch this scheduler."
+                exit 0
+              fi
+            else
+              stalls=0
+            fi
+            if [ "$iter" -ge 40 ]; then
+              echo "iteration cap reached; self-dispatching continuation"
+              gh workflow run scheduler.yml --ref "$GITHUB_REF_NAME" -f sha="$SHA"
+              exit 0
+            fi
+            sleep 30
+          done
