@@ -90,7 +90,7 @@ jobs:
         env:
           SHA: ${{ steps.sha.outputs.sha }}
         run: |
-          if scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" . 2>/dev/null; then
+          if bash scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" . 2>/dev/null; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "no graph artifact for $SHA (plan failed or expired); nothing to do"
@@ -114,7 +114,7 @@ jobs:
           is_built() {
             local n="$1"
             if [ -z "${BUILT[$n]:-}" ]; then
-              if [ -n "$(scripts/artifact.sh find "pkgs-$n-$SHA" build-node.yml "title=build $n @ $SHA")" ]; then
+              if [ -n "$(bash scripts/artifact.sh find "pkgs-$n-$SHA" build-node.yml "title=build $n @ $SHA")" ]; then
                 BUILT[$n]=yes
               else
                 BUILT[$n]=no

@@ -61,7 +61,7 @@ jobs:
       - name: Idempotency gate
         id: gate
         run: |
-          if [ -n "$(scripts/artifact.sh find "pkgs-$NODE_ID-$SHA" build-node.yml "title=build $NODE_ID @ $SHA")" ]; then
+          if [ -n "$(bash scripts/artifact.sh find "pkgs-$NODE_ID-$SHA" build-node.yml "title=build $NODE_ID @ $SHA")" ]; then
             echo "node already built for this sha; nothing to do"
             echo "done=true" >> "$GITHUB_OUTPUT"
           else
@@ -70,7 +70,7 @@ jobs:
 
       - name: Fetch graph
         if: steps.gate.outputs.done == 'false'
-        run: scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" .
+        run: bash scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" .
 
       - name: Download ancestor packages
         if: steps.gate.outputs.done == 'false'
@@ -91,7 +91,7 @@ jobs:
           done
           for anc in "${!seen[@]}"; do
             echo "fetching ancestor package: $anc"
-            scripts/artifact.sh download "pkgs-$anc-$SHA" build-node.yml "title=build $anc @ $SHA" channel
+            bash scripts/artifact.sh download "pkgs-$anc-$SHA" build-node.yml "title=build $anc @ $SHA" channel
           done
           # Real system: 'channel/' is the rattler-build output_dir, which it
           # auto-indexes and uses as a local channel.
