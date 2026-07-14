@@ -1,0 +1,46 @@
+# Renders the build graph and publishes it as an artifact. Unprivileged:
+# works identically for fork PRs (read-only token, no dispatching here).
+# Its completion triggers the Scheduler via workflow_run.
+#
+# In the real system the "Render graph" step becomes:
+#   rattler-build graph --recipe-dir recipes/ --target-platform ... > graph.rendered.json
+name: Plan
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+    paths: [graph.json]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # For pull_request events GITHUB_SHA is the synthetic merge commit, but
+      # the scheduler only ever learns the PR *head* sha (workflow_run.head_sha),
+      # so the whole system namespaces on the head sha.
+      - name: Determine namespace sha
+        id: sha
+        run: echo "sha=${{ github.event.pull_request.head.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Render graph (mock)
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          jq --arg sha "$SHA" '. + {sha: $sha}' graph.json > graph.rendered.json
+          echo "graph for $SHA:"
+          jq -r '"  nodes: \(.nodes | length), edges: \(.edges | length)"' graph.rendered.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graph-${{ steps.sha.outputs.sha }}
+          path: graph.rendered.json
+          retention-days: 1

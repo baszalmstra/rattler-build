@@ -1,0 +1,158 @@
+# The privileged, event-driven scheduler. Triggered by every Plan/Build Node
+# completion, it does a GLOBAL SWEEP: dispatch every node whose parents' package
+# artifacts all exist and whose own doesn't. It never checks out or executes
+# PR code - it only reads the graph artifact and calls GitHub APIs - which is
+# what makes it safe to hold write permissions while fork PRs drive the DAG.
+#
+# The global sweep is the race-safety keystone: GitHub's concurrency grouping
+# keeps at most one queued scheduler run and cancels intermediate ones, which
+# would lose dispatches under a "children of the run that just finished"
+# design, but a later global sweep always re-derives everything ready.
+name: Scheduler
+
+on:
+  workflow_run:
+    workflows: ["Plan", "Build Node"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Namespace (head) sha to sweep
+        required: true
+        type: string
+  # Backstop: revives a stalled DAG if a workflow_run event is ever dropped.
+  # Remove or widen after testing; also used to test recovery deliberately.
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: scheduler
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Event payload fields are passed via env, never interpolated into
+      # script text: a Plan run's display_title is the PR title / commit
+      # message, i.e. attacker-controlled in fork PRs, and this workflow is
+      # privileged. Classic script-injection vector - keep it data.
+      - name: Determine target sha
+        id: sha
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WR_NAME: ${{ github.event.workflow_run.name }}
+          WR_TITLE: ${{ github.event.workflow_run.display_title }}
+          WR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          sha=""
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              sha="$INPUT_SHA"
+              ;;
+            workflow_run)
+              if [ "$WR_NAME" = "Plan" ]; then
+                sha="$WR_HEAD_SHA"
+              else
+                # Build Node runs execute on the default-branch ref, so their
+                # head_sha is useless; recover the namespace sha from the run
+                # title WE set ("build <node> @ <sha>").
+                sha="${WR_TITLE##*@ }"
+              fi
+              ;;
+            schedule)
+              sha=$(gh run list --workflow Plan --limit 1 --json headSha --jq '.[0].headSha // empty')
+              ;;
+          esac
+          if [[ -n "$sha" && ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "refusing suspicious sha: $sha" >&2
+            sha=""
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "sweeping sha: ${sha:-<none>}"
+
+      - name: Fetch graph
+        id: graph
+        if: steps.sha.outputs.sha != ''
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          if scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" . 2>/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no graph artifact for $SHA (plan failed or expired); nothing to do"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sweep
+        if: steps.graph.outputs.found == 'true'
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          # In-flight Build Node runs (queued/waiting/in_progress), by title.
+          gh run list --workflow "Build Node" --limit 100 \
+            --json displayTitle,status \
+            --jq '.[] | select(.status != "completed") | .displayTitle' > inflight.txt || true
+
+          # Memoized "is this node's package artifact present" check, so each
+          # node is queried at most once per sweep (API budget: GITHUB_TOKEN
+          # gets ~1000 req/h/repo).
+          declare -A BUILT
+          is_built() {
+            local n="$1"
+            if [ -z "${BUILT[$n]:-}" ]; then
+              if [ -n "$(scripts/artifact.sh find "pkgs-$n-$SHA" build-node.yml "title=build $n @ $SHA")" ]; then
+                BUILT[$n]=yes
+              else
+                BUILT[$n]=no
+              fi
+            fi
+            [ "${BUILT[$n]}" = "yes" ]
+          }
+
+          total=0 done_ct=0 dispatched=0
+          for node in $(jq -r '.nodes[].id' graph.rendered.json); do
+            total=$((total + 1))
+            if is_built "$node"; then
+              done_ct=$((done_ct + 1))
+              continue
+            fi
+            title="build $node @ $SHA"
+            if grep -qxF "$title" inflight.txt; then
+              echo "in flight:  $node"
+              continue
+            fi
+            ready=true
+            while IFS= read -r parent; do
+              [ -n "$parent" ] || continue
+              if ! is_built "$parent"; then
+                ready=false
+                break
+              fi
+            done < <(jq -r --arg n "$node" '.edges[] | select(.to == $n) | .from' graph.rendered.json)
+            if $ready; then
+              echo "dispatching: $node"
+              gh workflow run build-node.yml --ref "$GITHUB_REF_NAME" -f node_id="$node" -f sha="$SHA"
+              dispatched=$((dispatched + 1))
+            else
+              echo "blocked:    $node (waiting on parents)"
+            fi
+          done
+
+          echo "progress: $done_ct/$total built, $dispatched dispatched this sweep"
+          if [ "$done_ct" = "$total" ]; then
+            echo "::notice::DAG complete for $SHA"
+          fi

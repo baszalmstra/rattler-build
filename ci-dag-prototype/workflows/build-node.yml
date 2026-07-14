@@ -1,0 +1,128 @@
+# Builds exactly one graph node. Deliberately has ZERO write permissions and
+# references no secrets: in the real system this job checks out and executes
+# untrusted fork-PR code (build scripts), so it must hold nothing worth
+# stealing. All privileged operations (dispatching, check runs) live in the
+# Scheduler workflow.
+#
+# Dispatched on the default branch ref (workflow_dispatch cannot target fork
+# refs), so this trusted workflow file always comes from main; the real system
+# would additionally check out the PR's recipes via ref: refs/pull/<n>/head.
+name: Build Node
+run-name: "build ${{ inputs.node_id }} @ ${{ inputs.sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_id:
+        description: Graph node to build
+        required: true
+        type: string
+      sha:
+        description: Namespace (head) sha this build belongs to
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Duplicate dispatches of the same node are interchangeable (identical
+# inputs): at most one runs at a time, later ones queue and then no-op via
+# the idempotency gate. GitHub keeping only the newest queued run per group
+# is fine for the same reason.
+concurrency:
+  group: node-${{ inputs.node_id }}-${{ inputs.sha }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+  # Inputs are consumed via env, never interpolated into script text. node_id
+  # ultimately derives from graph content, which for fork PRs derives from
+  # untrusted recipes - treat as data, not code.
+  NODE_ID: ${{ inputs.node_id }}
+  SHA: ${{ inputs.sha }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate inputs
+        run: |
+          [[ "$NODE_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad node_id" >&2; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha" >&2; exit 1; }
+
+      # Artifact existence == completion. Makes duplicate dispatches free and
+      # the whole DAG resumable (re-run any failed run; done nodes no-op).
+      - name: Idempotency gate
+        id: gate
+        run: |
+          if [ -n "$(scripts/artifact.sh find "pkgs-$NODE_ID-$SHA" build-node.yml "title=build $NODE_ID @ $SHA")" ]; then
+            echo "node already built for this sha; nothing to do"
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch graph
+        if: steps.gate.outputs.done == 'false'
+        run: scripts/artifact.sh download "graph-$SHA" plan.yml "head=$SHA" .
+
+      - name: Download ancestor packages
+        if: steps.gate.outputs.done == 'false'
+        run: |
+          mkdir -p channel
+          # Transitive ancestors: BFS over reversed edges.
+          declare -A seen
+          todo=("$NODE_ID")
+          while [ "${#todo[@]}" -gt 0 ]; do
+            cur="${todo[0]}"; todo=("${todo[@]:1}")
+            while IFS= read -r p; do
+              [ -n "$p" ] || continue
+              if [ -z "${seen[$p]:-}" ]; then
+                seen[$p]=1
+                todo+=("$p")
+              fi
+            done < <(jq -r --arg n "$cur" '.edges[] | select(.to == $n) | .from' graph.rendered.json)
+          done
+          for anc in "${!seen[@]}"; do
+            echo "fetching ancestor package: $anc"
+            scripts/artifact.sh download "pkgs-$anc-$SHA" build-node.yml "title=build $anc @ $SHA" channel
+          done
+          # Real system: 'channel/' is the rattler-build output_dir, which it
+          # auto-indexes and uses as a local channel.
+
+      - name: Build (mock)
+        if: steps.gate.outputs.done == 'false'
+        run: |
+          secs=$(jq -r --arg n "$NODE_ID" '[.nodes[] | select(.id == $n) | .build_seconds] | first // 5' graph.rendered.json)
+          echo "building $NODE_ID for ${secs}s"
+          sleep "$secs"
+          mkdir -p out
+          {
+            echo "package: $NODE_ID"
+            echo "sha: $SHA"
+            echo "built-by-run: $GITHUB_RUN_ID (attempt $GITHUB_RUN_ATTEMPT)"
+            echo "inputs consumed:"
+            if compgen -G "channel/*" >/dev/null; then
+              sha256sum channel/* | sed 's/^/  /'
+            else
+              echo "  (none - root node)"
+            fi
+          } > "out/pkg-$NODE_ID.txt"
+          cat "out/pkg-$NODE_ID.txt"
+          # Real system: rattler-build build --recipe <recipe_path> \
+          #   --target-platform <tp> --ignore-recipe-variants --variant k=v ... \
+          #   --output-dir channel/
+
+      - name: Upload package artifact
+        if: steps.gate.outputs.done == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkgs-${{ inputs.node_id }}-${{ inputs.sha }}
+          path: out/
+          retention-days: 1
