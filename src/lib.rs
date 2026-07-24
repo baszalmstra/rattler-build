@@ -278,6 +278,12 @@ pub async fn get_build_output(
         ));
     }
 
+    if build_data.sbom && !build_data.common.experimental {
+        return Err(miette::miette!(
+            "SBOM generation is an experimental feature: provide the `--experimental` flag to enable this feature"
+        ));
+    }
+
     tracing::debug!(
         "Platforms: build: {}, host: {}, target: {}",
         build_data.build_platform,
@@ -580,6 +586,7 @@ pub async fn get_build_output(
                 sandbox_config: build_data.sandbox_configuration.clone(),
                 exclude_newer: build_data.exclude_newer,
                 repodata_revision: repodata_revision_from_v3_flag(build_data.common.v3),
+                sbom: build_data.sbom,
             },
             finalized_dependencies: None,
             finalized_sources: None,
@@ -1575,6 +1582,7 @@ pub async fn debug_recipe(
         sandbox_configuration: None,
         continue_on_failure: ContinueOnFailure::No,
         error_prefix_in_binary: false,
+        sbom: false,
         allow_symlinks_on_windows: false,
         allow_absolute_license_paths: false,
         exclude_newer: None,

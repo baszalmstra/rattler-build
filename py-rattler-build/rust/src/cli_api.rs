@@ -144,6 +144,7 @@ pub fn build_recipes_py(
         EnvironmentIsolation::default(),
         ContinueOnFailure::from(continue_on_failure),
         error_prefix_in_binary,
+        false, // sbom
         allow_symlinks_on_windows,
         allow_absolute_license_paths,
         exclude_newer,

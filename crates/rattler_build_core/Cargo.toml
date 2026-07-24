@@ -68,6 +68,7 @@ serde-untagged = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true }
+cyclonedx-bom = { workspace = true }
 minijinja = { workspace = true }
 tracing-subscriber = { workspace = true }
 miette = { workspace = true, features = ["fancy"] }
@@ -103,6 +104,9 @@ reflink-copy = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
 async-recursion = { workspace = true }
+uuid = { workspace = true }
+spdx = { workspace = true }
+urlencoding = { workspace = true }
 
 # Rattler crates
 rattler_config = { workspace = true }

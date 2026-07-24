@@ -69,6 +69,9 @@ pub struct BuildConfiguration {
     /// Repodata revision to target when writing package metadata.
     #[serde(skip_serializing, default)]
     pub repodata_revision: RepodataRevision,
+    /// Whether to generate SBOM documents into the final package
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sbom: bool,
 }
 
 impl BuildConfiguration {
@@ -93,5 +96,42 @@ impl BuildConfiguration {
             undefined_behavior: rattler_build_jinja::UndefinedBehavior::Lenient,
             recipe_path: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    /// A `BuildConfiguration` from a rendered recipe fixture that has no `sbom`
+    /// field.
+    fn base_configuration() -> BuildConfiguration {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-data/rendered_recipes/curl_recipe.yaml");
+        let content = fs_err::read_to_string(path).unwrap();
+        let recipe: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        serde_yaml::from_value(recipe["build_configuration"].clone()).unwrap()
+    }
+
+    #[test]
+    fn test_build_configuration_sbom_defaults_to_false() {
+        // a document without the field deserializes with sbom disabled
+        assert!(!base_configuration().sbom);
+    }
+
+    #[test]
+    fn test_build_configuration_sbom_serialization_is_conditional() {
+        let mut configuration = base_configuration();
+
+        // sbom = false is omitted from the serialized form
+        let json = serde_json::to_value(&configuration).unwrap();
+        assert!(json.get("sbom").is_none());
+
+        // sbom = true is included
+        configuration.sbom = true;
+        let json = serde_json::to_value(&configuration).unwrap();
+        assert_eq!(json.get("sbom"), Some(&serde_json::Value::Bool(true)));
     }
 }

@@ -1,0 +1,70 @@
+# Example: SBOM generation for a Rust package
+#
+# Based on the official conda-forge Rust recipe template:
+# https://conda-forge.org/docs/maintainer/example_recipes/rust/
+#
+# Requires `rattler-build build --experimental --sbom`. With the flag active,
+# the build script runs with $SBOM_DIR pointing at a writable directory and
+# every file placed there ends up in info/sboms/ inside the package, next to
+# the rattler-build.cdx.json document that rattler-build generates itself.
+#
+# cargo-cyclonedx (from conda-forge) produces a CycloneDX SBOM of the crate
+# dependency graph, so the package describes both its conda environments and
+# its statically linked Rust dependencies. cargo-auditable additionally embeds
+# the dependency list into the binary itself, and cargo-bundle-licenses ships
+# the crate licenses as THIRDPARTY.yml.
+
+context:
+  version: "0.17.0"
+
+package:
+  name: hexyl
+  version: ${{ version }}
+
+source:
+  url: https://github.com/sharkdp/hexyl/archive/refs/tags/v${{ version }}.tar.gz
+  sha256: 72fa17397ad187eec6b295d02c7caabbb209a6e0d5706187b8a599bd5df8615e
+
+build:
+  number: 0
+  script:
+    env:
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      CARGO_PROFILE_RELEASE_LTO: fat
+    content:
+      # writes hexyl.cdx.json next to Cargo.toml
+      - cargo cyclonedx --format json --spec-version 1.5
+      - if: unix
+        then:
+          - cp hexyl.cdx.json ${SBOM_DIR}/
+          - cargo auditable install --locked --no-track --bins --root ${PREFIX} --path .
+        else:
+          - copy "hexyl.cdx.json" "%SBOM_DIR%\hexyl.cdx.json"
+          - cargo auditable install --locked --no-track --bins --root %LIBRARY_PREFIX% --path .
+      - cargo-bundle-licenses --format yaml --output ./THIRDPARTY.yml
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('rust') }}
+    - cargo-bundle-licenses
+    - cargo-auditable
+    - cargo-cyclonedx
+
+tests:
+  - script: hexyl --help
+  - package_contents:
+      bin:
+        - hexyl
+      strict: true
+
+about:
+  homepage: https://github.com/sharkdp/hexyl
+  repository: https://github.com/sharkdp/hexyl
+  documentation: https://github.com/sharkdp/hexyl#readme
+  license: MIT OR Apache-2.0
+  license_file:
+    - LICENSE-MIT
+    - LICENSE-APACHE
+    - THIRDPARTY.yml
+  summary: A command-line hex viewer

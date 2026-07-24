@@ -22,8 +22,10 @@ use unicode_normalization::UnicodeNormalization;
 mod file_finder;
 mod file_mapper;
 mod metadata;
+mod sbom;
 pub use file_finder::{Files, TempFiles, content_type, read_package_files_list, record_files};
 pub use metadata::{contains_prefix_binary, contains_prefix_text, create_prefix_placeholder};
+pub use sbom::GENERATED_SBOM_FILE_NAME;
 use tempfile::NamedTempFile;
 
 use crate::{
@@ -103,6 +105,17 @@ pub enum PackagingError {
 
     #[error("Package file `{0}` listed in $RATTLER_BUILD_PACKAGE_FILES does not exist")]
     PackageFileMissing(PathBuf),
+
+    #[error(
+        "SBOM file `{0}` from $SBOM_DIR uses the file name reserved for the generated document"
+    )]
+    SbomReservedFileName(String),
+
+    #[error("SBOM file `{0:?}` from $SBOM_DIR does not have a valid UTF-8 file name")]
+    SbomNonUtf8FileName(PathBuf),
+
+    #[error("Failed to generate SBOM document: {0}")]
+    SbomGenerationError(String),
 }
 
 /// Split a path into the longest leading directory prefix that contains no glob
@@ -876,6 +889,11 @@ pub fn package_conda(
     if output.build_configuration.store_recipe {
         let recipe_files = write_recipe_folder(output, tmp.temp_dir.path())?;
         tmp.add_files(recipe_files);
+    }
+
+    if output.build_configuration.sbom {
+        tracing::info!("Writing SBOM files");
+        tmp.add_files(sbom::write_sbom_folder(output, tmp.temp_dir.path())?);
     }
 
     // create any entry points or link.json for noarch packages

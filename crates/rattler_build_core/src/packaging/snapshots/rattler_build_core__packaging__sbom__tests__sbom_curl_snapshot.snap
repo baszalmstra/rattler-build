@@ -1,0 +1,1385 @@
+---
+source: crates/rattler_build_core/src/packaging/sbom.rs
+expression: json
+---
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "serialNumber": "urn:uuid:9245ce69-8ce1-5533-9399-dcca0b0ffe94",
+  "metadata": {
+    "timestamp": "2023-11-21T13:28:13.086796Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "rattler-build",
+          "version": "0.12.1"
+        }
+      ]
+    },
+    "component": {
+      "type": "library",
+      "bom-ref": "pkg:conda/curl@8.0.1?build=h60d57d3_0&subdir=osx-arm64",
+      "name": "curl",
+      "version": "8.0.1",
+      "description": "tool and library for transferring data with URL syntax",
+      "licenses": [
+        {
+          "expression": "curl"
+        }
+      ],
+      "purl": "pkg:conda/curl@8.0.1?build=h60d57d3_0&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "http://curl.haxx.se/"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/curl/curl"
+        },
+        {
+          "type": "bom",
+          "url": "./syft.spdx.json",
+          "comment": "syft.spdx.json was collected from the SBOM_DIR of the build"
+        },
+        {
+          "type": "bom",
+          "url": "urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1",
+          "comment": "vendored.cdx.json was collected from the SBOM_DIR of the build"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/bzip2@1.0.8?build=h93a5062_5&channel=conda-forge&subdir=osx-arm64",
+      "name": "bzip2",
+      "version": "1.0.8",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "1bbc659ca658bfd49a481b5ef7a0f40f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "bfa84296a638bea78a8bb29abc493ee95f2a0218775642474a840411b950fe5f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "bzip2-1.0.6"
+        }
+      ],
+      "purl": "pkg:conda/bzip2@1.0.8?build=h93a5062_5&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h93a5062_5.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/ca-certificates@2023.11.17?build=hf0a4a13_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "ca-certificates",
+      "version": "2023.11.17",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "c01da7c77cfcba2107174e25c1d47384"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "75f4762a55f7e9453a603c967d549bfa0a7a9669d502d103cb6fbf8c86d993c6"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:conda/ca-certificates@2023.11.17?build=hf0a4a13_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/ca-certificates-2023.11.17-hf0a4a13_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/cctools_osx-arm64@973.0.1?build=h62378fb_15&channel=conda-forge&subdir=osx-arm64",
+      "name": "cctools_osx-arm64",
+      "version": "973.0.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "ef8fba44cc38ccb4741634eddd3e14f5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "731de9bfd150975a54b9c6ec6c107af5a72443744454ef03084be9d691c8a7db"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "APSL-2.0"
+        }
+      ],
+      "purl": "pkg:conda/cctools_osx-arm64@973.0.1?build=h62378fb_15&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/cctools_osx-arm64-973.0.1-h62378fb_15.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/clang-16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "clang-16",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "f7f1f0401b164aee25fcb046ce30afcb"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7d65bda0e91f4dc5506a4c874b37242fc6a7243bc9ee462caaa23ba628713a5b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/clang-16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/clang-16-16.0.6-default_h07b2d96_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "clang",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "93c8a691ef0718a88f9529226f576e81"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "dd6054b330994ab04d5f50852973546447540aec9462efb13028323e50739f34"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/clang-16.0.6-he79909e_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/clang_impl_osx-arm64@16.0.6?build=hc421ffc_6&channel=conda-forge&subdir=osx-arm64",
+      "name": "clang_impl_osx-arm64",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "849c0169de6bfc88253c81b2cb4ecc76"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "17667b5808d591331d202a49901b55a811f2b1c1486ba6b3037119915b369e9f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/clang_impl_osx-arm64@16.0.6?build=hc421ffc_6&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/clang_impl_osx-arm64-16.0.6-hc421ffc_6.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/clang_osx-arm64@16.0.6?build=h54d7cd3_6&channel=conda-forge&subdir=osx-arm64",
+      "name": "clang_osx-arm64",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "eff396eaf83eada374913218765eea6f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1d60c42e2f82d2ce4532000ca4345a8b39575bc76fd3fc7a52b7e337c6df22b5"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/clang_osx-arm64@16.0.6?build=h54d7cd3_6&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/clang_osx-arm64-16.0.6-h54d7cd3_6.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/clangxx@16.0.6?build=default_h298e243_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "clangxx",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "d4458b347db9073517317c4e652a4409"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d863b5d350c285257334aab8352121399cd3052922bf4a4e0e233df125f254d0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/clangxx@16.0.6?build=default_h298e243_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/clangxx-16.0.6-default_h298e243_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/compiler-rt@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=osx-arm64",
+      "name": "compiler-rt",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "b3dd772c4dc658203d4b5d10464cf829"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ce6a004144c7cb9b92622d3fefc5d85b4dbbe911c9a94809914e3a5b5d944e1f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/compiler-rt@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/compiler-rt-16.0.6-hf8d1dfb_1.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/compiler-rt_osx-arm64@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=noarch",
+      "name": "compiler-rt_osx-arm64",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "b6f8ffc7803d16bba414fdb8518209a2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "bb2acbf670084a35d4f704f92c053b990f8473045112628ecaea9e5f32c47785"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/compiler-rt_osx-arm64@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=noarch",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/noarch/compiler-rt_osx-arm64-16.0.6-hf8d1dfb_1.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/gettext@0.21.1?build=h0186832_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "gettext",
+      "version": "0.21.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "63d2ff6fddfa74e5458488fd311bf635"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "093b2f96dc4b48e4952ab8946facec98b34b708a056251fc19c23c3aad30039e"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LGPL-2.1-or-later AND GPL-3.0-or-later"
+        }
+      ],
+      "purl": "pkg:conda/gettext@0.21.1?build=h0186832_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/gettext-0.21.1-h0186832_0.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/icu@73.2?build=hc8870d7_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "icu",
+      "version": "73.2",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "8521bd47c0e11c5902535bb1a17c565f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ff9cd0c6cd1349954c801fb443c94192b637e1b414514539f3c49c56a39f51b1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/icu@73.2?build=hc8870d7_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/icu-73.2-hc8870d7_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/ld64_osx-arm64@609?build=ha4bd21c_15&channel=conda-forge&subdir=osx-arm64",
+      "name": "ld64_osx-arm64",
+      "version": "609",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "f4ccf19a2d6eb1f94de77e8aa64c2147"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "9342ff5f5bccbacf6d67cacc8a81fcded6e6ffebb9bc784a3af591cc6f6067d5"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "APSL-2.0"
+        }
+      ],
+      "purl": "pkg:conda/ld64_osx-arm64@609?build=ha4bd21c_15&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/ld64_osx-arm64-609-ha4bd21c_15.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libclang-cpp16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "libclang-cpp16",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "ac7ed9f991c11684e87acbc2c16a81bb"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3e1ba7510d9a8287edd9585bbdc6235307dbbd6563bcd28221f53c6789479438"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/libclang-cpp16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libclang-cpp16-16.0.6-default_h07b2d96_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "libcxx",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "9d7d724faf0413bf1dbc5a85935700c8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "11d3fb51c14832d9e4f6d84080a375dec21ea8a3a381a1910e67ff9cedc20355"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libcxx-16.0.6-h4653b0c_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libffi@3.4.2?build=h3422bc3_5&channel=conda-forge&subdir=osx-arm64",
+      "name": "libffi",
+      "version": "3.4.2",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "086914b672be056eb70fd4285b6783b6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "41b3d13efb775e340e4dba549ab5c029611ea6918703096b2eaa9c015c0750ca"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/libffi@3.4.2?build=h3422bc3_5&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.4.2-h3422bc3_5.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libglib@2.78.1?build=hb438215_1&channel=conda-forge&subdir=osx-arm64",
+      "name": "libglib",
+      "version": "2.78.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "3ce7984906f2ba4be662c219e8def77e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3d94b6d8d27301f23b0d0c8b078c5e0bf6fc4f5f6260f3794cfaf7e247fe9e20"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LGPL-2.1-or-later"
+        }
+      ],
+      "purl": "pkg:conda/libglib@2.78.1?build=hb438215_1&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libglib-2.78.1-hb438215_1.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "libiconv",
+      "version": "1.17",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "686f9c755574aa221f29fbcf36a67265"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2eb33065783b802f71d52bef6f15ce0fafea0adc8506f10ebd0d490244087bec"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "GPL and LGPL"
+          }
+        }
+      ],
+      "purl": "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libiconv-1.17-he4db4b2_0.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "libllvm16",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "ce01d4aa770fc6910bce0d47b4e4c538"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "91f42ba27db3cc25e271146d9016eccb99c7b948d22025f39748468cee2dc05f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libllvm16-16.0.6-he79909e_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libtool@2.4.7?build=hb7217d7_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "libtool",
+      "version": "2.4.7",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "fe8efc3385f58f0055e8100b07225055"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "efe50471d2baea151f2a93f1f99c05553f8c88e3f0065cdc267e1aa2e8c42449"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "GPL-2.0-or-later"
+        }
+      ],
+      "purl": "pkg:conda/libtool@2.4.7?build=hb7217d7_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libtool-2.4.7-hb7217d7_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libxml2@2.11.6?build=h0d0cfa8_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "libxml2",
+      "version": "2.11.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "37e112ce9494adfcee6c0c7bf3b5d98d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "07d2da8f3fb00fb6f84cd36b5329174b878105889f0fe21e79981f27573b47af"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/libxml2@2.11.6?build=h0d0cfa8_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libxml2-2.11.6-h0d0cfa8_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+      "name": "libzlib",
+      "version": "1.2.13",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "1a47f5236db2e06a320ffa0392f81bd8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ab1c8aefa2d54322a63aaeeefe9cf877411851738616c4068e0dccc66b9c758a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Zlib"
+        }
+      ],
+      "purl": "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.2.13-h53f4e23_5.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/llvm-tools@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "name": "llvm-tools",
+      "version": "16.0.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "1be8e193b74101ac2bde79a27e9444c1"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "134921812fb11630c2920f2f33b49ba485acac1db9b13cac2847927a99b294f7"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:conda/llvm-tools@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/llvm-tools-16.0.6-he79909e_2.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/make@4.3?build=he57ea6c_1&channel=conda-forge&subdir=osx-arm64",
+      "name": "make",
+      "version": "4.3",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "1939d04ef89e38fde652ee8c669e092f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a011e3e1c4caec821eb4213d0a0154d39e5f81a44d2e8bafe6f84e7840c3909e"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "GPL-3.0-or-later"
+        }
+      ],
+      "purl": "pkg:conda/make@4.3?build=he57ea6c_1&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/make-4.3-he57ea6c_1.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/openssl@3.1.4?build=h0d3ecfb_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "openssl",
+      "version": "3.1.4",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "5a89552fececf4cd99628318ccbb67a3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3c715b1d4940c7ad6065935db18924b85a54048dde066f963cfc250340639457"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:conda/openssl@3.1.4?build=h0d3ecfb_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.1.4-h0d3ecfb_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/pcre2@10.42?build=h26f9a81_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "pcre2",
+      "version": "10.42",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "3e12888ecc8ee1ebee2eef9b7856357a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0335a08349ecd8dce0b81699fcd61b58415e658fe953feb27316fbb994df0685"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/pcre2@10.42?build=h26f9a81_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.42-h26f9a81_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/perl@5.32.1?build=4_hf2054a2_perl5&channel=conda-forge&subdir=osx-arm64",
+      "name": "perl",
+      "version": "5.32.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "d9389447361c7b53e3bbfc947cae0973"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3bf5e43b9c7127f6d0529393535ac69c25483b3b8b76cb71ffa454f6aa73f5a3"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "GPL-1.0-or-later OR Artistic-1.0-Perl"
+        }
+      ],
+      "purl": "pkg:conda/perl@5.32.1?build=4_hf2054a2_perl5&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/perl-5.32.1-4_hf2054a2_perl5.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/pkg-config@0.29.2?build=hab62308_1008&channel=conda-forge&subdir=osx-arm64",
+      "name": "pkg-config",
+      "version": "0.29.2",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "8d173d52214679033079d1b0582075aa"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e59e69111709d097f9938e72ba19811ec1ef36aababdbed77bd7c767f15639e0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "GPL-2.0-or-later"
+        }
+      ],
+      "purl": "pkg:conda/pkg-config@0.29.2?build=hab62308_1008&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/pkg-config-0.29.2-hab62308_1008.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/sigtool@0.1.3?build=h44b9a77_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "sigtool",
+      "version": "0.1.3",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "4a2cac04f86a4540b8c9b8d8f597848f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "70791ae00a3756830cb50451db55f63e2a42a2fa2a8f1bab1ebd36bbb7d55bff"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/sigtool@0.1.3?build=h44b9a77_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/sigtool-0.1.3-h44b9a77_0.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/tapi@1100.0.11?build=he4954df_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "tapi",
+      "version": "1100.0.11",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "d83362e7d0513f35f454bc50b0ca591d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1709265fbee693a9e8b4126b0a3e68a6c4718b05821c659279c1af051f2d40f3"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "NCSA"
+        }
+      ],
+      "purl": "pkg:conda/tapi@1100.0.11?build=he4954df_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/tapi-1100.0.11-he4954df_0.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/xz@5.2.6?build=h57fd34a_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "xz",
+      "version": "5.2.6",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "39c6b54e94014701dd157f4f576ed211"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "59d78af0c3e071021cfe82dc40134c19dab8cdf804324b62940f5c8cd71803ec"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LGPL-2.1 and GPL-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:conda/xz@5.2.6?build=h57fd34a_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/xz-5.2.6-h57fd34a_0.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/zstd@1.5.5?build=h4f39d0f_0&channel=conda-forge&subdir=osx-arm64",
+      "name": "zstd",
+      "version": "1.5.5",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "5b212cfb7f9d71d603ad891879dc7933"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7e1fe6057628bbb56849a6741455bbb88705bae6d6646257e57904ac5ee5a481"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/zstd@1.5.5?build=h4f39d0f_0&channel=conda-forge&subdir=osx-arm64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.5-h4f39d0f_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:conda/curl@8.0.1?build=h60d57d3_0&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/clang_osx-arm64@16.0.6?build=h54d7cd3_6&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libtool@2.4.7?build=hb7217d7_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/make@4.3?build=he57ea6c_1&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/perl@5.32.1?build=4_hf2054a2_perl5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/pkg-config@0.29.2?build=hab62308_1008&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/bzip2@1.0.8?build=h93a5062_5&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/ca-certificates@2023.11.17?build=hf0a4a13_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/cctools_osx-arm64@973.0.1?build=h62378fb_15&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/ld64_osx-arm64@609?build=ha4bd21c_15&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/sigtool@0.1.3?build=h44b9a77_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/clang-16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libclang-cpp16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/clang-16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/clang_impl_osx-arm64@16.0.6?build=hc421ffc_6&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/cctools_osx-arm64@973.0.1?build=h62378fb_15&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/compiler-rt@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/ld64_osx-arm64@609?build=ha4bd21c_15&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/llvm-tools@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/clang_osx-arm64@16.0.6?build=h54d7cd3_6&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/clang_impl_osx-arm64@16.0.6?build=hc421ffc_6&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/clangxx@16.0.6?build=default_h298e243_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/compiler-rt@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/clangxx@16.0.6?build=default_h298e243_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/compiler-rt_osx-arm64@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=noarch"
+      ]
+    },
+    {
+      "ref": "pkg:conda/compiler-rt_osx-arm64@16.0.6?build=hf8d1dfb_1&channel=conda-forge&subdir=noarch",
+      "dependsOn": [
+        "pkg:conda/clang@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/clangxx@16.0.6?build=default_h298e243_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/gettext@0.21.1?build=h0186832_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/icu@73.2?build=hc8870d7_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/ld64_osx-arm64@609?build=ha4bd21c_15&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/sigtool@0.1.3?build=h44b9a77_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/tapi@1100.0.11?build=he4954df_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/libclang-cpp16@16.0.6?build=default_h07b2d96_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/libffi@3.4.2?build=h3422bc3_5&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/libglib@2.78.1?build=hb438215_1&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/gettext@0.21.1?build=h0186832_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libffi@3.4.2?build=h3422bc3_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/pcre2@10.42?build=h26f9a81_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libxml2@2.11.6?build=h0d0cfa8_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/zstd@1.5.5?build=h4f39d0f_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/libtool@2.4.7?build=hb7217d7_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/libxml2@2.11.6?build=h0d0cfa8_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/icu@73.2?build=hc8870d7_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/xz@5.2.6?build=h57fd34a_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/llvm-tools@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libllvm16@16.0.6?build=he79909e_2&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libxml2@2.11.6?build=h0d0cfa8_0&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/zstd@1.5.5?build=h4f39d0f_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/make@4.3?build=he57ea6c_1&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/openssl@3.1.4?build=h0d3ecfb_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/ca-certificates@2023.11.17?build=hf0a4a13_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/pcre2@10.42?build=h26f9a81_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/bzip2@1.0.8?build=h93a5062_5&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/perl@5.32.1?build=4_hf2054a2_perl5&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/pkg-config@0.29.2?build=hab62308_1008&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libglib@2.78.1?build=hb438215_1&channel=conda-forge&subdir=osx-arm64",
+        "pkg:conda/libiconv@1.17?build=he4db4b2_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/sigtool@0.1.3?build=h44b9a77_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/openssl@3.1.4?build=h0d3ecfb_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/tapi@1100.0.11?build=he4954df_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libcxx@16.0.6?build=h4653b0c_0&channel=conda-forge&subdir=osx-arm64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/xz@5.2.6?build=h57fd34a_0&channel=conda-forge&subdir=osx-arm64"
+    },
+    {
+      "ref": "pkg:conda/zstd@1.5.5?build=h4f39d0f_0&channel=conda-forge&subdir=osx-arm64",
+      "dependsOn": [
+        "pkg:conda/libzlib@1.2.13?build=h53f4e23_5&channel=conda-forge&subdir=osx-arm64"
+      ]
+    }
+  ]
+}

@@ -47,6 +47,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 dashmap = "6.1"
 dunce = "1.0.5"
 console = { version = "0.16.3", features = ["windows-console-colors"] }
+cyclonedx-bom = "0.8"
 flate2 = "1.1.9"
 fs-err = "3.3.0"
 futures = "0.3.32"
@@ -90,6 +91,7 @@ toml = "1.0.7"
 tracing = "0.1.44"
 url = "2.5.8"
 urlencoding = "2.1"
+uuid = { version = "1", features = ["v5"] }
 walkdir = "2.5.0"
 which = "8.0.2"
 windows-sys = "0.61"

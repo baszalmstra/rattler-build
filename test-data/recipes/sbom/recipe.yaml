@@ -1,0 +1,24 @@
+package:
+  name: sbom-test
+  version: 1.0.0
+
+build:
+  # The script copies an extra SBOM document into $SBOM_DIR and writes a
+  # marker file, both only when $SBOM_DIR is set, so tests can assert the
+  # behavior with and without --sbom.
+  script:
+    - if: unix
+      then:
+        - echo "sbom payload" > $PREFIX/sbom-payload.txt
+        - if [ -n "${SBOM_DIR:-}" ]; then cp "$RECIPE_DIR/vendored.cdx.json" "$SBOM_DIR/vendored.cdx.json"; fi
+        - if [ -n "${SBOM_DIR:-}" ]; then echo "$SBOM_DIR" > "$PREFIX/sbom-dir-marker.txt"; fi
+      else:
+        - echo sbom payload > "%PREFIX%\sbom-payload.txt"
+        - if defined SBOM_DIR copy "%RECIPE_DIR%\vendored.cdx.json" "%SBOM_DIR%\vendored.cdx.json"
+        - if defined SBOM_DIR echo %SBOM_DIR% > "%PREFIX%\sbom-dir-marker.txt"
+
+requirements:
+  build:
+    - ca-certificates
+  host:
+    - tzdata
