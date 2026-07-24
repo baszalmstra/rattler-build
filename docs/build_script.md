@@ -423,14 +423,10 @@ noted, no variables are inherited from the shell environment in which you invoke
 
 `SBOM_DIR`
 
-: Path to a writable directory in which the build script can place additional
-  SBOM documents (e.g. output of `cargo cyclonedx`, `cyclonedx-gomod` or
-  `syft`). Every regular file in the directory is packaged into `info/sboms/`
-  with its name preserved; the name `rattler-build.cdx.json` is reserved for
-  the document rattler-build generates itself. This is an experimental
-  feature: the variable is only set when building with
-  `--experimental --sbom`. See
-  [SBOM generation](experimental_features.md#sbom-generation) for details.
+: Path to a writable directory where the build script can drop extra SBOM documents (e.g. output of `cargo cyclonedx`, `cyclonedx-gomod` or `syft`).
+  Every regular file in the directory is packaged into `info/sboms/` with its name preserved; the name `rattler-build.cdx.json` is reserved for the document rattler-build generates itself.
+  This is an experimental feature: the variable is only set when building with `--experimental --sbom`.
+  See [SBOM generation](experimental_features.md#sbom-generation) for details.
 
 `PKG_BUILDNUM`
 
