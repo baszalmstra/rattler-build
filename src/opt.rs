@@ -718,6 +718,11 @@ pub struct BuildOpts {
     #[arg(long, help_heading = "Modifying result")]
     pub error_prefix_in_binary: bool,
 
+    /// Generate SBOM (Software Bill of Materials) documents into the package
+    /// (experimental)
+    #[arg(long, help_heading = "Modifying result", env = "RATTLER_BUILD_SBOM")]
+    pub sbom: bool,
+
     /// Allow symlinks in packages on Windows (defaults to false - symlinks are forbidden on Windows)
     #[arg(long, help_heading = "Modifying result")]
     pub allow_symlinks_on_windows: bool,
@@ -914,6 +919,7 @@ pub struct BuildData {
     pub sandbox_configuration: Option<SandboxConfiguration>,
     pub continue_on_failure: ContinueOnFailure,
     pub error_prefix_in_binary: bool,
+    pub sbom: bool,
     pub allow_symlinks_on_windows: bool,
     pub allow_absolute_license_paths: bool,
     pub exclude_newer: Option<jiff::Timestamp>,
@@ -951,6 +957,7 @@ impl BuildData {
         env_isolation: rattler_build_script::EnvironmentIsolation,
         continue_on_failure: ContinueOnFailure,
         error_prefix_in_binary: bool,
+        sbom: bool,
         allow_symlinks_on_windows: bool,
         allow_absolute_license_paths: bool,
         exclude_newer: Option<jiff::Timestamp>,
@@ -992,6 +999,7 @@ impl BuildData {
             sandbox_configuration,
             continue_on_failure,
             error_prefix_in_binary,
+            sbom,
             allow_symlinks_on_windows,
             allow_absolute_license_paths,
             exclude_newer,
@@ -1044,6 +1052,7 @@ impl BuildData {
             opts.env_isolation,
             opts.continue_on_failure.into(),
             opts.error_prefix_in_binary,
+            opts.sbom,
             opts.allow_symlinks_on_windows,
             opts.allow_absolute_license_paths,
             opts.exclude_newer,

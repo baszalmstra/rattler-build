@@ -302,6 +302,11 @@ impl Output {
             env_vars.remove(key);
         }
 
+        // SBOM files are only collected from package output builds. A restored
+        // staging cache does not rerun its script, so exposing SBOM_DIR here
+        // would drop files for cache hits.
+        env_vars.remove("SBOM_DIR");
+
         // Create Jinja context
         let selector_config = self.build_configuration.selector_config();
         let mut jinja = Jinja::new(selector_config.clone());

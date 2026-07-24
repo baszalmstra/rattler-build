@@ -214,6 +214,12 @@ impl Directories {
         self.build_dir.join(crate::consts::PACKAGE_FILES_LIST_NAME)
     }
 
+    /// Directory exposed to build scripts as `SBOM_DIR` when SBOM generation
+    /// is enabled. Build scripts can drop SBOM documents here.
+    pub fn sbom_dir(&self) -> PathBuf {
+        self.build_dir.join("sbom")
+    }
+
     /// Remove all directories except for the cache directory
     pub fn clean(&self) -> Result<(), std::io::Error> {
         if self.build_dir.exists() {
