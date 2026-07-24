@@ -1,0 +1,53 @@
+# Example: SBOM generation for a Rust package
+#
+# Requires `rattler-build build --experimental --sbom`. With the flag active,
+# the build script runs with $SBOM_DIR pointing at a writable directory and
+# every file placed there ends up in info/sboms/ inside the package, next to
+# the rattler-build.cdx.json document that rattler-build generates itself.
+#
+# cargo-cyclonedx (from conda-forge) produces a CycloneDX SBOM of the crate
+# dependency graph, so the package describes both its conda environments and
+# its statically linked Rust dependencies.
+
+context:
+  version: "0.17.0"
+
+package:
+  name: hexyl
+  version: ${{ version }}
+
+source:
+  url: https://github.com/sharkdp/hexyl/archive/refs/tags/v${{ version }}.tar.gz
+  sha256: 72fa17397ad187eec6b295d02c7caabbb209a6e0d5706187b8a599bd5df8615e
+
+build:
+  script:
+    - if: unix
+      then:
+        # writes hexyl.cdx.json next to Cargo.toml
+        - cargo cyclonedx --format json --spec-version 1.5
+        - cp ${SRC_DIR}/hexyl.cdx.json ${SBOM_DIR}/
+        - $BUILD_PREFIX/bin/cargo install --locked --bins --root ${PREFIX} --path .
+      else:
+        # writes hexyl.cdx.json next to Cargo.toml
+        - cargo cyclonedx --format json --spec-version 1.5
+        - copy "%SRC_DIR%\hexyl.cdx.json" "%SBOM_DIR%\hexyl.cdx.json"
+        - '"%BUILD_PREFIX%\Library\bin\cargo" install --locked --bins --root "%PREFIX%" --path .'
+
+requirements:
+  build:
+    - ${{ compiler('rust') }}
+    - cargo-cyclonedx
+
+tests:
+  - script:
+      - hexyl --version
+
+about:
+  homepage: https://github.com/sharkdp/hexyl
+  repository: https://github.com/sharkdp/hexyl
+  license: MIT OR Apache-2.0
+  license_file:
+    - LICENSE-MIT
+    - LICENSE-APACHE
+  summary: A command-line hex viewer

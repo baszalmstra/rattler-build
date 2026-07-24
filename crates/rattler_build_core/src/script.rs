@@ -101,6 +101,18 @@ impl Output {
             Err(err) => return Err(err.into()),
         }
 
+        // Reset the SBOM directory so that files from a previous run are not
+        // collected into the package again.
+        if self.build_configuration.sbom {
+            let sbom_dir = self.build_configuration.directories.sbom_dir();
+            match fs_err::remove_dir_all(&sbom_dir) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            fs_err::create_dir_all(&sbom_dir)?;
+        }
+
         let exec_args = self.prepare_build_script().await?;
         let build_prefix = if self.recipe.build().merge_build_and_host_envs {
             None

@@ -352,6 +352,10 @@ pub fn vars(output: &Output, build_state: &str) -> HashMap<String, Option<String
         directories.package_files_list_path().to_string_lossy()
     );
 
+    if output.build_configuration.sbom {
+        insert!(vars, "SBOM_DIR", directories.sbom_dir().to_string_lossy());
+    }
+
     // python variables
     // hard-code this because we never want pip's build isolation
     // https://github.com/conda/conda-build/pull/2972#discussion_r198290241
