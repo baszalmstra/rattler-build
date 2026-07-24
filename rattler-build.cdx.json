@@ -1,0 +1,504 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "serialNumber": "urn:uuid:6111d75d-5c1b-5bee-8e60-ca6fb8dd50b4",
+  "metadata": {
+    "timestamp": "2026-07-24T14:29:32.4008186Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "rattler-build",
+          "version": "0.70.1"
+        }
+      ]
+    },
+    "component": {
+      "type": "library",
+      "bom-ref": "pkg:conda/hexyl@0.17.0?build=h9490d1a_0&subdir=win-64",
+      "name": "hexyl",
+      "version": "0.17.0",
+      "description": "A command-line hex viewer",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:conda/hexyl@0.17.0?build=h9490d1a_0&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sharkdp/hexyl"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/sharkdp/hexyl"
+        },
+        {
+          "type": "bom",
+          "url": "./hexyl.cdx.json",
+          "comment": "hexyl.cdx.json was collected from the SBOM_DIR of the build"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/cargo-cyclonedx@0.5.9?build=h18a1a76_1&channel=conda-forge&subdir=win-64",
+      "name": "cargo-cyclonedx",
+      "version": "0.5.9",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "9f003e4db3ffd0b83f5c6d5f05b37c4d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "00887f30e56e864a403fc119046225cdd55a0124631eca7d881400d9dafa1c4a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:conda/cargo-cyclonedx@0.5.9?build=h18a1a76_1&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/cargo-cyclonedx-0.5.9-h18a1a76_1.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/rust-std-x86_64-pc-windows-msvc@1.97.1?build=h17fc481_0&channel=conda-forge&subdir=noarch",
+      "name": "rust-std-x86_64-pc-windows-msvc",
+      "version": "1.97.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "6b04ebdd0a3b7a94656cc3ca8e29dff3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e0d8cc8b0e747b8d916f457d3ae6a0bd63e9b9143e75abd1dc2bc2a0b37b1ad2"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/rust-std-x86_64-pc-windows-msvc@1.97.1?build=h17fc481_0&channel=conda-forge&subdir=noarch",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/noarch/rust-std-x86_64-pc-windows-msvc-1.97.1-h17fc481_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/rust@1.97.1?build=hf8d6059_0&channel=conda-forge&subdir=win-64",
+      "name": "rust",
+      "version": "1.97.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "199483e9c1765e6f9b3e74c269030bf7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "93482675f35d9644712230e7bfc908937342fdf450339f7152807dafb36181a8"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/rust@1.97.1?build=hf8d6059_0&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/rust-1.97.1-hf8d6059_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/rust_win-64@1.97.1?build=ha913c02_0&channel=conda-forge&subdir=win-64",
+      "name": "rust_win-64",
+      "version": "1.97.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "0f6d3376342c224c87bfb0757341dd5c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a1450066c136f3055ff5263bea15d907fa90240a6c59cf947acb29b314fcdd5f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/rust_win-64@1.97.1?build=ha913c02_0&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/rust_win-64-1.97.1-ha913c02_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64",
+      "name": "ucrt",
+      "version": "10.0.26100.0",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "71b24316859acd00bdb8b38f5e2ce328"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3005729dce6f3d3f5ec91dfc49fc75a0095f9cd23bab49efb899657297ac91a5"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LicenseRef-MicrosoftWindowsSDK10"
+        }
+      ],
+      "purl": "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/ucrt-10.0.26100.0-h57928b3_0.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vc14_runtime@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "name": "vc14_runtime",
+      "version": "14.51.36231",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "06a5bf5a1ca16cce0df6eaa91fc42bc2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8153ed849c92e891eacac0f2f8d7ecb79f9b5fd7f7917fbb896f252a60a40390"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LicenseRef-MicrosoftVisualCpp2015-2022Runtime"
+        }
+      ],
+      "purl": "pkg:conda/vc14_runtime@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36231-h1b9f54f_39.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vc@14.5?build=h1b7c187_39&channel=conda-forge&subdir=win-64",
+      "name": "vc",
+      "version": "14.5",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "2eacea63f545b97342da520df6854276"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "17693b60cb54f80c60275f003f3bfc1b128af56dbfd65c4fae37c64eeb755ce1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/vc@14.5?build=h1b7c187_39&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/vc-14.5-h1b7c187_39.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vcomp14@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "name": "vcomp14",
+      "version": "14.51.36231",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "8b53a83fda40ec679e4d63fa32fae989"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "07fb14713c4bc62e2533a2e23a363abfb0e65650681fba0ae4c840e2219350f3"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "LicenseRef-MicrosoftVisualCpp2015-2022Runtime"
+        }
+      ],
+      "purl": "pkg:conda/vcomp14@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36231-h1b9f54f_39.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vs2026_win-64@19.51.36231?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "name": "vs2026_win-64",
+      "version": "19.51.36231",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "f219312aba6f82b6bd004dcc1a19cb4a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a1a9377166e4485b43dbea4b6eed4a33511bce4c4417c9087d37a2babb5f6191"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/vs2026_win-64@19.51.36231?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/vs2026_win-64-19.51.36231-h7ef1f97_39.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vs_win-64@2026.1?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "name": "vs_win-64",
+      "version": "2026.1",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "fbf01772bb1b794243f4315b9da56702"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "51bd3f4c757780a756669012bfd38b5880d60c90fa95aabd6507aabe37f5c5ad"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:conda/vs_win-64@2026.1?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/win-64/vs_win-64-2026.1-h7ef1f97_39.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/vswhere@3.1.7?build=h40126e0_1&channel=conda-forge&subdir=noarch",
+      "name": "vswhere",
+      "version": "3.1.7",
+      "scope": "excluded",
+      "hashes": [
+        {
+          "alg": "MD5",
+          "content": "f622897afff347b715d046178ad745a5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b72270395326dc56de9bd6ca82f63791b3c8c9e2b98e25242a9869a4ca821895"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:conda/vswhere@3.1.7?build=h40126e0_1&channel=conda-forge&subdir=noarch",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://conda.anaconda.org/conda-forge/noarch/vswhere-3.1.7-h40126e0_1.conda"
+        }
+      ],
+      "properties": [
+        {
+          "name": "rattler-build:environment",
+          "value": "build"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:conda/hexyl@0.17.0?build=h9490d1a_0&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/cargo-cyclonedx@0.5.9?build=h18a1a76_1&channel=conda-forge&subdir=win-64",
+        "pkg:conda/rust_win-64@1.97.1?build=ha913c02_0&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/cargo-cyclonedx@0.5.9?build=h18a1a76_1&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64",
+        "pkg:conda/vc14_runtime@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+        "pkg:conda/vc@14.5?build=h1b7c187_39&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/rust-std-x86_64-pc-windows-msvc@1.97.1?build=h17fc481_0&channel=conda-forge&subdir=noarch"
+    },
+    {
+      "ref": "pkg:conda/rust@1.97.1?build=hf8d6059_0&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/rust-std-x86_64-pc-windows-msvc@1.97.1?build=h17fc481_0&channel=conda-forge&subdir=noarch"
+      ]
+    },
+    {
+      "ref": "pkg:conda/rust_win-64@1.97.1?build=ha913c02_0&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/rust-std-x86_64-pc-windows-msvc@1.97.1?build=h17fc481_0&channel=conda-forge&subdir=noarch",
+        "pkg:conda/rust@1.97.1?build=hf8d6059_0&channel=conda-forge&subdir=win-64",
+        "pkg:conda/vs_win-64@2026.1?build=h7ef1f97_39&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64"
+    },
+    {
+      "ref": "pkg:conda/vc14_runtime@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64",
+        "pkg:conda/vcomp14@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/vc@14.5?build=h1b7c187_39&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/vc14_runtime@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/vcomp14@14.51.36231?build=h1b9f54f_39&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/ucrt@10.0.26100.0?build=h57928b3_0&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/vs2026_win-64@19.51.36231?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/vswhere@3.1.7?build=h40126e0_1&channel=conda-forge&subdir=noarch"
+      ]
+    },
+    {
+      "ref": "pkg:conda/vs_win-64@2026.1?build=h7ef1f97_39&channel=conda-forge&subdir=win-64",
+      "dependsOn": [
+        "pkg:conda/vs2026_win-64@19.51.36231?build=h7ef1f97_39&channel=conda-forge&subdir=win-64"
+      ]
+    },
+    {
+      "ref": "pkg:conda/vswhere@3.1.7?build=h40126e0_1&channel=conda-forge&subdir=noarch"
+    }
+  ]
+}
