@@ -3,7 +3,7 @@
   "specVersion": "1.5",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-24T14:29:32.000000000Z",
+    "timestamp": "2026-07-24T14:59:32.000000000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -19,7 +19,7 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784903372/work#hexyl@0.17.0",
+      "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784905172/work#hexyl@0.17.0",
       "author": "David Peter <mail@david-peter.de>",
       "name": "hexyl",
       "version": "0.17.0",
@@ -44,14 +44,14 @@
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784903372/work#hexyl@0.17.0 bin-target-0",
+          "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784905172/work#hexyl@0.17.0 bin-target-0",
           "name": "hexyl",
           "version": "0.17.0",
           "purl": "pkg:cargo/hexyl@0.17.0?download_url=file://.#src/lib.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784903372/work#hexyl@0.17.0 bin-target-1",
+          "bom-ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784905172/work#hexyl@0.17.0 bin-target-1",
           "name": "hexyl",
           "version": "0.17.0",
           "purl": "pkg:cargo/hexyl@0.17.0?download_url=file://.#src/main.rs"
@@ -1035,7 +1035,7 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784903372/work#hexyl@0.17.0",
+      "ref": "path+file:///C:/Users/Public/rb-sbom/bld/rattler-build_hexyl_1784905172/work#hexyl@0.17.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.91",
         "registry+https://github.com/rust-lang/crates.io-index#clap@4.5.20",
