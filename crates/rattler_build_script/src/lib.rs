@@ -10,15 +10,20 @@
 //! interpreters (python, perl, etc.) are written out and executed by the
 //! activated wrapper. Independent build steps (`run_steps`) activate once,
 //! capture the exported environment, and run every step in its own wrapper
-//! process started from that environment.
+//! process started from that environment. The steps are scheduled by their
+//! `StepGraph`: steps that declare their inputs and outputs run as soon as
+//! the steps they depend on have succeeded, possibly in parallel, while steps
+//! that declare neither run as sequential barriers.
 
 pub mod sandbox;
 mod script;
+mod step_model;
 
 pub use sandbox::{SandboxArguments, SandboxConfiguration};
 pub use script::{
     Script, ScriptContent, determine_interpreter_from_path, platform_script_extensions,
 };
+pub use step_model::{GraphStep, StepInput, StepInputKind, StepOutput, StepOutputKind, StepRoot};
 
 #[cfg(feature = "execution")]
 mod activation;
@@ -35,6 +40,8 @@ mod runtime;
 #[cfg(feature = "execution")]
 mod shell_dialect;
 #[cfg(feature = "execution")]
+mod step_graph;
+#[cfg(feature = "execution")]
 mod steps;
 #[cfg(feature = "execution")]
 mod windows_machine;
@@ -50,5 +57,9 @@ pub use execution_context::{ExecutionContext, PrefixLayout, PrefixWithPlatform};
 pub use interpreter::{InterpreterError, closest_interpreter};
 #[cfg(feature = "execution")]
 pub use runtime::RuntimeEnv;
+#[cfg(feature = "execution")]
+pub use step_graph::{
+    PlannedInput, PlannedOutput, StepGraph, StepGraphError, StepPath, StepPathError, StepRef,
+};
 #[cfg(feature = "execution")]
 pub use steps::{create_steps_script, run_steps};

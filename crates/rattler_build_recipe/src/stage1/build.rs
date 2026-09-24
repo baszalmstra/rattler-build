@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use indexmap::IndexMap;
 use rattler_build_jinja::Variable;
-use rattler_build_script::{Script, ScriptContent};
+use rattler_build_script::{GraphStep, Script, ScriptContent, StepInput, StepOutput};
 use rattler_build_yaml_parser::ParseError;
 use rattler_conda_types::{Flag, NoArchType, package::EntryPoint};
 use serde::{Deserialize, Serialize};
@@ -224,16 +224,65 @@ pub struct Step {
     /// Optional working directory for this step, relative to the host prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// Optional explicit step identity, referenced by `depends_on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Declared inputs; `None` (absent) differs from an explicit empty list.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_declared"
+    )]
+    pub inputs: Option<Vec<StepInput>>,
+    /// Declared outputs; `None` (absent) differs from an explicit empty list.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_declared"
+    )]
+    pub outputs: Option<Vec<StepOutput>>,
+    /// Explicit ordering edges to other steps, by `id`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+}
+
+/// Deserialize a present declaration list. A missing field defaults to `None`
+/// via `#[serde(default)]`; an explicit `null` is rejected so it cannot be
+/// mistaken for an undeclared step.
+fn deserialize_declared<'de, D, T>(deserializer: D) -> Result<Option<Vec<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Ok(match PresentField::<Vec<T>>::deserialize(deserializer)? {
+        PresentField::Present(declarations) => Some(declarations),
+        PresentField::Missing => None,
+    })
 }
 
 impl Step {
-    /// Create a step from an evaluated script payload.
+    /// Create a step from an evaluated script payload, without graph
+    /// declarations (a sequential barrier step).
     pub fn new(script: Script) -> Self {
         Self {
             run: step_run_from_content(script.content),
             interpreter: script.interpreter,
             env: script.env,
             cwd: script.cwd,
+            id: None,
+            inputs: None,
+            outputs: None,
+            depends_on: Vec::new(),
+        }
+    }
+
+    /// The step-graph declarations of this step.
+    pub fn graph_step(&self) -> GraphStep {
+        GraphStep {
+            id: self.id.clone(),
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.clone(),
+            depends_on: self.depends_on.clone(),
         }
     }
 
@@ -833,6 +882,69 @@ mod tests {
             steps[0].run,
             StepRun::Commands(vec!["echo step".to_string()])
         );
+    }
+
+    #[test]
+    fn test_step_graph_declarations_roundtrip() {
+        use rattler_build_script::{StepInputKind, StepOutputKind, StepRoot};
+
+        let declared = Step {
+            id: Some("compile".to_string()),
+            inputs: Some(vec![StepInput {
+                root: StepRoot::Work,
+                path: "src/*.c".into(),
+                kind: StepInputKind::Glob,
+            }]),
+            outputs: Some(vec![StepOutput {
+                root: StepRoot::Host,
+                path: "lib".into(),
+                kind: StepOutputKind::Tree,
+            }]),
+            ..Step::new(Script {
+                content: ScriptContent::Commands(vec!["make".to_string()]),
+                ..Default::default()
+            })
+        };
+        let empty = Step {
+            inputs: Some(Vec::new()),
+            outputs: Some(Vec::new()),
+            depends_on: vec!["compile".to_string()],
+            ..Step::new(Script {
+                content: ScriptContent::Commands(vec!["echo empty".to_string()]),
+                ..Default::default()
+            })
+        };
+        let barrier = Step::new(Script {
+            content: ScriptContent::Commands(vec!["echo barrier".to_string()]),
+            ..Default::default()
+        });
+        let build = Build {
+            plan: BuildPlan::Steps(vec![declared, empty, barrier]),
+            ..Default::default()
+        };
+
+        let yaml = serde_yaml::to_string(&build).unwrap();
+        let roundtripped: Build = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(roundtripped.plan, build.plan, "{yaml}");
+
+        let recipe_yaml = format!(
+            "package:\n  name: test-pkg\n  version: 1.0.0\nbuild:\n{}",
+            yaml.lines()
+                .map(|line| format!("  {line}\n"))
+                .collect::<String>()
+        );
+        let parsed = crate::stage0::parse_recipe_from_source(&recipe_yaml).unwrap();
+        let steps = parsed.build.plan.steps().expect("steps mode");
+        let crate::stage0::Step::Run(barrier) = &steps[2];
+        assert!(barrier.inputs.is_none() && barrier.outputs.is_none());
+        let crate::stage0::Step::Run(empty) = &steps[1];
+        assert_eq!(empty.inputs.as_deref().map(<[_]>::len), Some(0));
+    }
+
+    #[test]
+    fn test_build_deserialize_rejects_null_step_declarations() {
+        let yaml = "steps:\n  - run: echo hi\n    inputs:\n    outputs: []\n";
+        assert!(serde_yaml::from_str::<Build>(yaml).is_err());
     }
 
     #[test]

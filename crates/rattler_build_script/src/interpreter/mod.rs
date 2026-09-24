@@ -315,7 +315,7 @@ impl SelectedInterpreter {
 mod tests {
     use super::*;
     use crate::{
-        ExecutionContext, RuntimeEnv,
+        ExecutionContext, GraphStep, RuntimeEnv,
         execution::{BuildScriptSection, ExecutionArgs, ResolvedScriptContents},
     };
     use fs_err as fs;
@@ -337,6 +337,7 @@ mod tests {
                 env: IndexMap::new(),
                 cwd: None,
                 label: None,
+                graph: GraphStep::default(),
             }],
             env_vars: IndexMap::new(),
             secrets: IndexMap::new(),

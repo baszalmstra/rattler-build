@@ -54,8 +54,10 @@ resulting exported environment variables, and then runs each step as an
 independent process started from that captured environment plus the step's own
 `env` and `cwd`. Variables that activation removes stay removed, and nothing a
 step changes (environment variables, current directory, shell variables) carries
-over to later steps; share results between steps through files. Steps run in
-order and the build stops at the first failing step. A step supports:
+over to later steps; share results between steps through files. Steps that do
+not declare their files run in order; steps that do can run in parallel (see
+[Step graphs](#step-graphs)). The build stops at the first failing step. A step
+supports:
 
 - **`run`** - Required inline command, multiline string, or list of commands.
 - **`if`** - Optional Jinja selector expression, such as `unix` or
@@ -65,6 +67,13 @@ order and the build stops at the first failing step. A step supports:
   resolved against the host prefix (`$PREFIX` / `%PREFIX%`). Without `cwd`, a
   step runs in the work directory (`$SRC_DIR` / `%SRC_DIR%`).
 - **`env`** - Optional environment variables for this step only.
+- **`id`** - Optional name of the step, which `depends_on` refers to. Ids must
+  be unique among the steps selected by their `if` conditions, so an `if: unix`
+  and an `if: win` variant of a step can share one.
+- **`inputs`** and **`outputs`** - Optional files the step reads and writes.
+  Declaring both puts the step in the step graph.
+- **`depends_on`** - Optional list of step ids that must succeed before this
+  step starts.
 
 !!! note "Steps only inherit exported variables"
     Steps do not run inside the shell that performed activation. Shell
@@ -101,6 +110,175 @@ build:
     Rattler-Build inserts fail-fast guards between list items, not between the
     physical lines inside one multiline scalar, so check `%errorlevel%` yourself
     when a multiline `cmd.exe` block needs per-line failure handling.
+
+### Step graphs
+
+A step that declares both `inputs` and `outputs` is a _declared step_. Instead
+of waiting for the step listed before it, a declared step starts as soon as the
+steps it depends on have succeeded, so independent declared steps run at the
+same time:
+
+```yaml title="recipe.yaml"
+build:
+  steps:
+    - id: compile-a
+      inputs:
+        - root: work
+          path: src/a.c
+      outputs:
+        - root: work
+          path: obj/a.o
+      run: |
+        mkdir -p obj
+        $CC $CFLAGS -c src/a.c -o obj/a.o
+
+    - id: compile-b
+      inputs:
+        - root: work
+          path: src/b.c
+      outputs:
+        - root: work
+          path: obj/b.o
+      run: |
+        mkdir -p obj
+        $CC $CFLAGS -c src/b.c -o obj/b.o
+
+    # Waits for both compile steps, whose outputs match its glob input.
+    - id: link
+      inputs:
+        - root: work
+          path: obj/*.o
+          kind: glob
+      outputs:
+        - root: host
+          path: bin/app
+      run: |
+        mkdir -p "$PREFIX/bin"
+        $CC obj/*.o -o "$PREFIX/bin/app"
+```
+
+Every input and output names a `path` relative to a `root`:
+
+| `root`  | Directory                                             |
+| ------- | ----------------------------------------------------- |
+| `work`  | The work directory (`$SRC_DIR` / `%SRC_DIR%`)         |
+| `host`  | The host prefix (`$PREFIX` / `%PREFIX%`)              |
+| `build` | The build prefix (`$BUILD_PREFIX` / `%BUILD_PREFIX%`) |
+
+An input's `kind` is `file` (the default), one exact path, or `glob`, a pattern
+in which `*` matches within one path component, `**` matches any number of
+directories, and `{a,b}` and `[...]` match alternatives and character classes
+within one component. An output's `kind` is `file` (the default) or `tree`: a
+directory together with everything below it. Paths may use `/` or `\` and may
+be templated with `${{ }}`. They must not be empty, absolute, or contain `..`
+or a `:` anywhere, because Windows reads `:` as a drive (`C:`) or a file
+stream. When Windows is the build platform, a component also must not end in a
+dot or a space, because Windows silently drops those from file names, and must
+not look like a short (8.3) name, ending in `~` and digits before any extension
+such as `CONDA_~1` or `OBJ~2.TXT`, because Windows may open another file under
+that name. Such names are rejected even when no file has that short name. The
+same relative path under `work` and under a prefix names different files. When
+the host and build environments share one prefix, `host` and `build` paths name
+the same files: a `build` input waits for the `host` output of the same path,
+and a `host` and a `build` output of the same path conflict. When Windows or
+macOS is the build platform, paths are compared case-insensitively, as their
+file systems usually do.
+
+A declared step waits for:
+
+- the step producing each of its inputs: the step whose output is that path, a
+  file it matches (for a glob), or a `tree` containing it. An exact input that
+  names a directory also waits for the producers of files inside it. A
+  generated input is ready only once its producer has succeeded; a copy left by
+  an earlier build does not count.
+- the steps named in its `depends_on`. `depends_on` only orders steps: it does
+  not say which files a step reads, so declare those as `inputs`.
+
+An exact input that no step produces must exist when its step is about to
+start. A glob input may also match no file at all.
+
+Right before a declared step starts, Rattler-Build removes whatever an earlier
+build left at its outputs in the work directory. It never removes anything from
+the host and build prefixes, which hold installed packages: an output there must
+not exist yet (an empty directory at a `tree` output is fine), or the step fails
+without starting. After a declared step succeeds, each of its outputs must
+exist.
+
+#### Undeclared steps are barriers
+
+A step without `inputs` and `outputs` may read and change anything, so it runs
+alone: it starts after every step listed before it has finished, and every step
+listed after it waits for it to finish. Undeclared steps therefore split the
+list into groups whose declared steps run in parallel:
+
+```text
+A: declared --+
+              +-> C: undeclared -+-> D: declared
+B: declared --+                  +-> E: declared
+```
+
+A and B can run at the same time, as can D and E, but none of them run while C
+does. A recipe whose steps declare nothing runs exactly as before, one step
+after the other.
+
+`inputs: []` and `outputs: []` are different from leaving both out: an explicit
+empty list declares that the step reads or writes no files, so the step runs in
+parallel with the other steps of its group. Declaring only one of `inputs` and
+`outputs` is an error.
+
+#### Checks and failures
+
+Before activating the environment or running any step, Rattler-Build checks the
+whole list and fails the build when:
+
+- two steps have the same `id`, or `depends_on` names an id that no selected
+  step has;
+- the dependencies form a cycle, including a step that reads its own output or
+  depends on a step listed after a barrier that follows it;
+- two outputs name the same path or one lies inside a `tree` output of the
+  other, even within one step;
+- a path or glob is invalid, or a step declares only one of `inputs` and
+  `outputs`;
+- an output in the work directory claims a file Rattler-Build writes there
+  itself: `conda_build.log`, `build_env.sh`, `build_env.bat`, `conda_build.sh`,
+  `conda_build.bat`, or anything in `conda_build_steps` (in any case when Windows
+  or macOS is the build platform);
+- any step is declared and the work directory is the host or build prefix, lies
+  inside one, or contains one, so that clearing a `work` output could remove
+  installed files;
+- a step's `cwd` (or the work directory, for a step without `cwd`) is one of the
+  step's own `tree` outputs or lies inside one, because clearing that output
+  would remove the directory the step starts in. Start the step in the parent
+  of the tree instead (for example, leave out `cwd` and `cd build` in its
+  commands), or declare a tree that does not contain the `cwd`.
+
+The errors name the steps, paths or directories involved.
+
+At most as many steps run at the same time as there are CPUs available to
+Rattler-Build. Their output is logged line by line as they print it, so lines of
+steps running at the same time interleave, and secrets stay masked. When a step
+fails, no further step starts, the steps still running are allowed to finish,
+and the build fails with the error of the first failing step.
+
+Declarations are not enforced: a step can still read and write files it does
+not declare, and steps running at the same time can then race. Declare every
+file a step reads or writes, or leave the step undeclared.
+
+!!! note "Not cached yet"
+    Declarations only order steps and check their files. Every step runs in
+    every build; step results are not cached or reused.
+
+!!! note "Debugging a build with steps"
+    The `conda_build.sh` / `conda_build.bat` written to the work directory
+    replays the steps one at a time, in an order that respects their
+    dependencies and barriers. It does not reproduce which steps ran at the
+    same time, and it does not check declared inputs and outputs.
+
+!!! tip "Per-step process start-up"
+    Every step starts its own shell process (`bash`, or `cmd.exe` on Windows),
+    which costs more than running one more command in a script that is already
+    running. Keep a group of tiny related commands in one step instead of
+    splitting it into many steps; this cost is higher with `cmd.exe`.
 
 ## Environment variables
 

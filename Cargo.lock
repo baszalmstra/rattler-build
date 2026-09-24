@@ -5218,6 +5218,7 @@ dependencies = [
  "console",
  "fs-err",
  "futures",
+ "globset",
  "indexmap 2.14.2",
  "insta",
  "itertools 0.15.0",

@@ -37,7 +37,9 @@ def test_basic_staging(rattler_build: RattlerBuild, recipes: Path, tmp_path: Pat
 def test_staging_build_steps(
     rattler_build: RattlerBuild, recipes: Path, tmp_path: Path
 ):
-    """Test that staging outputs execute `build.steps` once and share the result."""
+    """Test that a staging `build.steps` graph combines independent work-root
+    outputs in a dependent step, that both inheriting packages contain the same
+    combined file, and that the work-root intermediates are not packaged."""
     rattler_build.build(
         recipes / "staging/build-steps.yaml",
         tmp_path,
@@ -47,10 +49,16 @@ def test_staging_build_steps(
     pkg1 = get_extracted_package(tmp_path, "staging-build-steps-a")
     pkg2 = get_extracted_package(tmp_path, "staging-build-steps-b")
 
+    # `combine` consumed both independent work-root outputs.
     content1 = (pkg1 / "staging-steps.txt").read_text().splitlines()
     content2 = (pkg2 / "staging-steps.txt").read_text().splitlines()
     assert content1 == ["one", "two"]
     assert content2 == content1
+
+    # Intermediate `work` outputs stay in the work directory, not the prefix.
+    for pkg in (pkg1, pkg2):
+        assert not (pkg / "one.txt").exists()
+        assert not (pkg / "two.txt").exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlinks not fully supported on Windows")
