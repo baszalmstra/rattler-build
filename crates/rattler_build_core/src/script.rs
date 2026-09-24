@@ -137,6 +137,23 @@ pub(crate) fn prepare_build_plan_execution_args(
     })
 }
 
+/// Runs execution arguments prepared by [`prepare_build_plan_execution_args`]
+/// the way the build plan requires.
+///
+/// A `build.script` runs activation and its script in one wrapper process.
+/// `build.steps`, even a single step, activate once and run every step in its
+/// own process from the captured activated environment. Package outputs and
+/// staging outputs share this dispatch.
+pub(crate) async fn run_build_plan(
+    plan: &BuildPlan,
+    exec_args: ExecutionArgs,
+) -> Result<(), InterpreterError> {
+    match plan {
+        BuildPlan::Script(_) => rattler_build_script::run_script(exec_args).await,
+        BuildPlan::Steps(_) => rattler_build_script::run_steps(exec_args).await,
+    }
+}
+
 impl Output {
     /// Helper function to get a jinja renderer for the output's recipe context.
     pub(crate) fn jinja_renderer(&self) -> impl Fn(&str) -> Result<String, String> {
@@ -149,7 +166,7 @@ impl Output {
     ///
     /// The build script is always expressed as an ordered list of sections: a
     /// `build.script` is a single section, and `build.steps` are one section per
-    /// step. Both go through the same execution path.
+    /// step. [`run_build_plan`] decides how the sections run.
     async fn prepare_build_script(&self) -> Result<ExecutionArgs, std::io::Error> {
         let host_prefix = self.build_configuration.directories.host_prefix.clone();
         let target_platform = self.build_configuration.target_platform;
@@ -229,7 +246,7 @@ impl Output {
         }
 
         let exec_args = self.prepare_build_script().await?;
-        rattler_build_script::run_script(exec_args).await?;
+        run_build_plan(&self.recipe.build().plan, exec_args).await?;
 
         Ok(())
     }
@@ -244,6 +261,10 @@ impl Output {
     /// - A build environment setup file (`build_env.sh`/`build_env.bat`)
     /// - The main build script file (`conda_build.sh`/`conda_build.bat`)
     ///
+    /// For `build.steps`, the main build script replays the steps the way the
+    /// build runs them, and every step gets its own wrapper in
+    /// `conda_build_steps/step_<index>/`.
+    ///
     /// # Errors
     ///
     /// Returns an `std::io::Error` if:
@@ -254,6 +275,9 @@ impl Output {
         let _enter = span.enter();
 
         let exec_args = self.prepare_build_script().await?;
-        rattler_build_script::create_build_script(exec_args).await
+        match &self.recipe.build().plan {
+            BuildPlan::Script(_) => rattler_build_script::create_build_script(exec_args).await,
+            BuildPlan::Steps(_) => rattler_build_script::create_steps_script(exec_args).await,
+        }
     }
 }

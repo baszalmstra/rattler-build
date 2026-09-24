@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add `run_steps`, which activates once and runs each build step as an independent process from the captured exported environment; `run_script` keeps the single activated wrapper for `build.script`
+
 ## [0.2.11](https://github.com/prefix-dev/rattler-build/compare/rattler_build_script-v0.2.10...rattler_build_script-v0.2.11) - 2026-09-14
 
 ### Other

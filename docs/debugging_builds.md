@@ -209,7 +209,8 @@ output/
 │       └─ work/                    # Source code and working directory
 │       │   └─ .source_info.json    # Source information (extracted folders, etc.)
 │       │   └─ build_env.sh         # Environment setup script
-│       │   └─ conda_build.sh       # The actual build script (sources `build_env.sh`)
+│       │   └─ conda_build.sh       # Build script, or standalone replay for `build.steps`
+│       │   └─ conda_build_steps/   # One wrapper per step with `build.steps`
 │       │   └─ conda_build.log      # Complete build output
 │       └─ host_env_placehold_.../  # Host environment (runtime dependencies)
 │       └─ build_env/               # Build environment (build-time dependencies)
@@ -221,6 +222,21 @@ output/
 │       └─ work_dir/                # Cached work directory from staging build
 └─ <platform>/                      # Built packages
 ```
+
+### Builds using `build.steps`
+
+With [`build.steps`](build_script.md#experimental-build-steps), the files
+above work as for `build.script`, with these differences:
+
+- `conda_build.sh` / `conda_build.bat` replays the whole build: it activates
+  the environment once and then runs every step in its own process, like
+  Rattler-Build does. `rattler-build debug run` therefore reruns all steps.
+- A failing step names its own script,
+  `conda_build_steps/step_<index>/conda_build.sh` (or `.bat`), which runs
+  only that step. It does not activate the environment, so run it with `bash`
+  (or `cmd.exe /d /c`) from a shell in which the build environment is already
+  active, such as `rattler-build debug shell` or one that has sourced
+  `build_env.sh` (or called `build_env.bat`).
 
 ## Environment Variables Available in the Debug Shell
 

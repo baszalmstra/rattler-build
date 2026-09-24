@@ -49,17 +49,36 @@ build:
 `steps: []` explicitly selects steps mode and prevents default `build.sh` /
 `build.bat` discovery.
 
-Each step is a scoped section of the generated build wrapper, so step-local
-`env` values and `cwd` changes do not leak into later steps. A step supports:
+Rattler-Build activates the build and host environments once, captures the
+resulting exported environment variables, and then runs each step as an
+independent process started from that captured environment plus the step's own
+`env` and `cwd`. Variables that activation removes stay removed, and nothing a
+step changes (environment variables, current directory, shell variables) carries
+over to later steps; share results between steps through files. Steps run in
+order and the build stops at the first failing step. A step supports:
 
 - **`run`** - Required inline command, multiline string, or list of commands.
 - **`if`** - Optional Jinja selector expression, such as `unix` or
   `target_platform == "linux-64"`. Do not wrap expressions in `${{ }}`.
 - **`interpreter`** - Optional interpreter override for this step.
 - **`cwd`** - Optional working directory for this step. Relative paths are
-  resolved against the host prefix (`$PREFIX` / `%PREFIX%`), and the wrapper
-  changes to it only for that step.
-- **`env`** - Optional environment variables scoped to this step.
+  resolved against the host prefix (`$PREFIX` / `%PREFIX%`). Without `cwd`, a
+  step runs in the work directory (`$SRC_DIR` / `%SRC_DIR%`).
+- **`env`** - Optional environment variables for this step only.
+
+!!! note "Steps only inherit exported variables"
+    Steps do not run inside the shell that performed activation. Shell
+    functions, non-exported shell variables, and shell options defined by
+    activation scripts are not visible to steps. `build.script` (and the
+    default `build.sh` / `build.bat`) keeps running inside the activated
+    wrapper shell, so activation-defined shell state remains available there.
+
+!!! warning "Windows values with line breaks"
+    On Windows, the environment after activation is read from `cmd.exe`'s
+    `SET` output, one line per variable. Values that activation leaves
+    unchanged reach steps exactly as they were, but a value that an activation
+    script sets or changes to contain a line break is cut at the first line
+    break, and its further lines can appear as separate variables.
 
 ```yaml title="recipe.yaml"
 build:

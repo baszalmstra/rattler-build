@@ -76,8 +76,9 @@ impl std::str::FromStr for EnvironmentIsolation {
 /// Arguments for executing a script in a given interpreter.
 #[derive(Debug)]
 pub struct ExecutionArgs {
-    /// The ordered sections the build wrapper is composed of. Each section runs
-    /// in its own scope with its own interpreter and step-local `env`.
+    /// The ordered sections to run. Each section runs in its own scope with
+    /// its own interpreter and step-local `env`: inside one build wrapper with
+    /// [`run_script`], or in its own process with [`crate::run_steps`].
     pub sections: Vec<BuildScriptSection>,
     /// Environment variables to set before executing the script
     pub env_vars: IndexMap<String, String>,
@@ -400,11 +401,11 @@ pub(crate) struct SpawnedProcess {
 /// Spawns `program` with `args` in `cwd` with exactly `env` as the child
 /// environment plus `PWD` set to `cwd`. stdin is null; stdout/stderr are piped
 /// and CRLF-normalized.
-pub(crate) fn spawn_process(
+pub(crate) fn spawn_process<K: AsRef<OsStr>, V: AsRef<OsStr>>(
     program: &OsStr,
     args: &[String],
     cwd: &Path,
-    env: &IndexMap<String, String>,
+    env: impl IntoIterator<Item = (K, V)>,
 ) -> io::Result<SpawnedProcess> {
     let mut command = tokio::process::Command::new(program);
     command
@@ -601,8 +602,8 @@ pub struct BuildScriptSection {
 /// with optional step-local `env`, optional `cwd`, and a boundary-comment label.
 ///
 /// `env` is scoped to the section (see `ShellDialect::scope_section`) and is
-/// distinct from [`ExecutionArgs::env_vars`], the whole-build environment. The
-/// wrapper is built from one [`ScriptSection`] per [`ExecutionArgs::sections`] entry.
+/// distinct from [`ExecutionArgs::env_vars`], the whole-build environment. A
+/// wrapper is built from one [`ScriptSection`] per section it runs.
 pub(crate) struct ScriptSection<'a> {
     /// Explicit interpreter, or `None` to infer from a file-backed path and
     /// otherwise fall back to the wrapper shell.
@@ -638,52 +639,88 @@ fn section_script_filename(extension: &str, index: SectionIndex) -> String {
 
 /// Returns the path to the generated native build wrapper script.
 ///
-/// The wrapper sources the activation script, then runs the ordered
-/// [`ExecutionArgs::sections`], each wrapped in an isolated scope (see
-/// `scope_section`). Sections with no interpreter, or with the native wrapper
-/// shell itself (`cmd` on Windows, `bash` on Unix), are appended directly to the
-/// wrapper; sections with a specialized interpreter are written to script files
-/// and invoked via the resolved interpreter.
+/// Writes the activation script (see [`write_activation_script`]) and a
+/// wrapper in the work directory that runs all [`ExecutionArgs::sections`]
+/// (see [`write_wrapper_script`]).
 pub(crate) async fn generate_build_script(
     args: &ExecutionArgs,
 ) -> Result<PathBuf, crate::InterpreterError> {
     let dialect = crate::shell_dialect::shell_dialect(args.context.runtime().process_platform());
+    let activation_script_path = write_activation_script(args, dialect.as_ref()).await?;
+    write_wrapper_script(
+        args,
+        dialect.as_ref(),
+        &args.work_dir,
+        Some(&activation_script_path),
+        &args.sections,
+        None,
+    )
+    .await
+}
+
+/// Writes the combined host/build activation script `build_env.<ext>` into
+/// the work directory and returns its path.
+pub(crate) async fn write_activation_script(
+    args: &ExecutionArgs,
+    dialect: &dyn crate::shell_dialect::ShellDialect,
+) -> Result<PathBuf, crate::InterpreterError> {
     let shell = dialect.shell();
-
-    let script_extension = shell.extension();
-    let activation_script_path = args.work_dir.join(format!("build_env.{script_extension}"));
-    let build_script_path = args
+    let activation_script_path = args
         .work_dir
-        .join(format!("conda_build.{script_extension}"));
-
+        .join(format!("build_env.{}", shell.extension()));
     let activation_script = crate::activation::activation_script(args, shell.clone())
         .map_err(|err| std::io::Error::other(err.to_string()))?;
     tokio::fs::write(
         &activation_script_path,
-        crate::shell_dialect::write_shell_script(shell.clone(), &activation_script)?,
+        crate::shell_dialect::write_shell_script(shell, &activation_script)?,
     )
     .await?;
+    Ok(activation_script_path)
+}
 
-    let sections: Vec<ScriptSection> = args
-        .sections
-        .iter()
-        .map(|section| ScriptSection {
-            interpreter: section.interpreter.as_deref(),
-            content: &section.content,
-            env: &section.env,
-            cwd: section.cwd.as_deref(),
-            label: section.label.as_deref(),
-        })
-        .collect();
+/// Writes the native wrapper `conda_build.<ext>` into `artifact_dir` and
+/// returns its path.
+///
+/// The wrapper sources `activation_script_path`, if given, unless the
+/// environment is already activated, then runs the ordered `sections`, each
+/// wrapped in an isolated scope (see `scope_section`). Sections with no
+/// interpreter, or with the native wrapper shell itself (`cmd` on Windows,
+/// `bash` on Unix), are appended directly to the wrapper; sections with a
+/// specialized interpreter are written to script files in `artifact_dir` and
+/// invoked via the resolved interpreter. With a `base_dir`, every section
+/// changes into its `cwd` resolved against `base_dir`, or into `base_dir`
+/// itself when it has none.
+pub(crate) async fn write_wrapper_script(
+    args: &ExecutionArgs,
+    dialect: &dyn crate::shell_dialect::ShellDialect,
+    artifact_dir: &Path,
+    activation_script_path: Option<&Path>,
+    sections: &[BuildScriptSection],
+    base_dir: Option<&Path>,
+) -> Result<PathBuf, crate::InterpreterError> {
+    let shell = dialect.shell();
+    let build_script_path = artifact_dir.join(format!("conda_build.{}", shell.extension()));
 
     let total = sections.len();
     let mut fragments = Vec::with_capacity(total);
     for (position, section) in sections.iter().enumerate() {
+        let resolved_cwd = base_dir.map(|base_dir| match &section.cwd {
+            Some(cwd) => base_dir.join(cwd),
+            None => base_dir.to_path_buf(),
+        });
+        let section = ScriptSection {
+            interpreter: section.interpreter.as_deref(),
+            content: &section.content,
+            env: &section.env,
+            cwd: resolved_cwd.as_deref().or(section.cwd.as_deref()),
+            label: section.label.as_deref(),
+        };
         let body = build_section_body(
             args,
-            dialect.as_ref(),
+            dialect,
             &shell,
-            section,
+            artifact_dir,
+            &section,
             SectionIndex { position, total },
         )
         .await?;
@@ -695,35 +732,52 @@ pub(crate) async fn generate_build_script(
         fragments.push(dialect.scope_section(section.label, section.env, section.cwd, &body)?);
     }
 
-    let build_script = format!(
-        "{}\n{}",
-        dialect.preamble(&activation_script_path),
-        fragments.join("\n"),
-    );
-    tokio::fs::write(
+    write_native_wrapper(
+        dialect,
         &build_script_path,
-        crate::shell_dialect::write_shell_script(shell, &build_script)?,
+        &dialect.preamble(activation_script_path),
+        &fragments,
+    )
+    .await?;
+    Ok(build_script_path)
+}
+
+/// Writes a native wrapper script to `path`: `preamble` (see
+/// `ShellDialect::preamble`) followed by the scoped `fragments`. Bash
+/// wrappers are made executable.
+pub(crate) async fn write_native_wrapper(
+    dialect: &dyn crate::shell_dialect::ShellDialect,
+    path: &Path,
+    preamble: &str,
+    fragments: &[String],
+) -> io::Result<()> {
+    let script = format!("{preamble}\n{}", fragments.join("\n"));
+    tokio::fs::write(
+        path,
+        crate::shell_dialect::write_shell_script(dialect.shell(), &script)?,
     )
     .await?;
 
     #[cfg(unix)]
     {
-        if build_script_path.extension().and_then(|e| e.to_str()) == Some("sh") {
+        if path.extension().and_then(|e| e.to_str()) == Some("sh") {
             use std::{fs::Permissions, os::unix::fs::PermissionsExt};
             let permissions = Permissions::from_mode(0o755);
-            tokio::fs::set_permissions(&build_script_path, permissions).await?;
+            tokio::fs::set_permissions(path, permissions).await?;
         }
     }
 
-    Ok(build_script_path)
+    Ok(())
 }
 
 /// Builds the raw (unscoped) wrapper body for one section: native code when no
 /// interpreter applies, otherwise an invocation of the resolved interpreter.
+/// Generated section script files are written into `artifact_dir`.
 async fn build_section_body(
     args: &ExecutionArgs,
     dialect: &dyn crate::shell_dialect::ShellDialect,
     shell: &rattler_shell::shell::ShellEnum,
+    artifact_dir: &Path,
     section: &ScriptSection<'_>,
     index: SectionIndex,
 ) -> Result<String, crate::InterpreterError> {
@@ -766,14 +820,10 @@ async fn build_section_body(
         // needs call indirection so `exit /b` exits only this section instead
         // of terminating the whole wrapper.
         if let Some(native_command) = dialect.native_section_script_command(
-            &args
-                .work_dir
-                .join(section_script_filename(shell.extension(), index)),
+            &artifact_dir.join(section_script_filename(shell.extension(), index)),
         ) && !script_text.trim().is_empty()
         {
-            let script_path = args
-                .work_dir
-                .join(section_script_filename(shell.extension(), index));
+            let script_path = artifact_dir.join(section_script_filename(shell.extension(), index));
             tokio::fs::write(
                 &script_path,
                 crate::shell_dialect::write_shell_script(shell.clone(), &script_text)?,
@@ -799,9 +849,7 @@ async fn build_section_body(
     let script_path = match section.content {
         ResolvedScriptContents::Path(path, _) => path.clone(),
         _ => {
-            let path = args
-                .work_dir
-                .join(section_script_filename(interpreter.extension(), index));
+            let path = artifact_dir.join(section_script_filename(interpreter.extension(), index));
             tokio::fs::write(&path, interpreter.script_contents(&script_text)).await?;
             path
         }
@@ -829,12 +877,14 @@ async fn build_section_body(
 ///
 /// Most callers use [`Script::run_script`], which builds the [`ExecutionArgs`]
 /// from a single script. This lower-level entry point runs a pre-built
-/// `ExecutionArgs` directly and is used when composing multiple sections.
+/// `ExecutionArgs` directly: activation and all sections run in one native
+/// wrapper process. Independent build steps use [`crate::run_steps`] instead.
 pub async fn run_script(exec_args: ExecutionArgs) -> Result<(), crate::InterpreterError> {
     let dialect =
         crate::shell_dialect::shell_dialect(exec_args.context.runtime().process_platform());
     let build_script_path = generate_build_script(&exec_args).await?;
-    let command_spec = dialect.command_to_run_script(&build_script_path, &exec_args.context);
+    let command_spec =
+        dialect.command_to_run_script(&build_script_path, &exec_args.work_dir, &exec_args.context);
 
     let process_env = resolve_process_env(
         exec_args.env_isolation,
@@ -877,29 +927,34 @@ pub async fn run_script(exec_args: ExecutionArgs) -> Result<(), crate::Interpret
 pub async fn create_build_script(exec_args: ExecutionArgs) -> Result<(), std::io::Error> {
     let build_script_path = generate_build_script(&exec_args)
         .await
-        .map_err(|err| match err {
-            crate::InterpreterError::ExecutionFailed(err) => err,
-            crate::InterpreterError::InterpreterNotFound(interpreter) => std::io::Error::other(
-                format!("interpreter '{interpreter}' was not found in the build environment"),
-            ),
-            crate::InterpreterError::InvalidInterpreter {
-                interpreter,
-                reason,
-            } => std::io::Error::other(format!(
-                "interpreter '{interpreter}' was found but is not valid: {reason}"
-            )),
-            crate::InterpreterError::UnsupportedInterpreter(interpreter) => {
-                let suggestion = crate::interpreter::closest_interpreter(&interpreter)
-                    .map(|s| format!(". Did you mean `{s}`?"))
-                    .unwrap_or_default();
-                std::io::Error::other(format!(
-                    "unsupported interpreter '{interpreter}'{suggestion}"
-                ))
-            }
-        })?;
+        .map_err(script_generation_error)?;
 
     tracing::info!("Build script created at {}", build_script_path.display());
     Ok(())
+}
+
+/// Describes an error from writing build scripts without running them.
+pub(crate) fn script_generation_error(err: crate::InterpreterError) -> std::io::Error {
+    match err {
+        crate::InterpreterError::ExecutionFailed(err) => err,
+        crate::InterpreterError::InterpreterNotFound(interpreter) => std::io::Error::other(
+            format!("interpreter '{interpreter}' was not found in the build environment"),
+        ),
+        crate::InterpreterError::InvalidInterpreter {
+            interpreter,
+            reason,
+        } => std::io::Error::other(format!(
+            "interpreter '{interpreter}' was found but is not valid: {reason}"
+        )),
+        crate::InterpreterError::UnsupportedInterpreter(interpreter) => {
+            let suggestion = crate::interpreter::closest_interpreter(&interpreter)
+                .map(|s| format!(". Did you mean `{s}`?"))
+                .unwrap_or_default();
+            std::io::Error::other(format!(
+                "unsupported interpreter '{interpreter}'{suggestion}"
+            ))
+        }
+    }
 }
 
 /// Finds the rattler-sandbox executable on the runtime `PATH`.
@@ -912,11 +967,11 @@ fn find_rattler_sandbox(runtime: &RuntimeEnv) -> Option<PathBuf> {
 /// Spawns a process and replaces the given strings in the output with the given replacements.
 /// This is used to replace the host prefix with $PREFIX and the build prefix with $BUILD_PREFIX
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_process_with_replacements(
+pub(crate) async fn run_process_with_replacements<K: AsRef<OsStr>, V: AsRef<OsStr>>(
     command_spec: &crate::shell_dialect::CommandSpec,
     cwd: &Path,
     replacements: &HashMap<String, String>,
-    process_env: &IndexMap<String, String>,
+    process_env: impl IntoIterator<Item = (K, V)>,
     sandbox_config: Option<&SandboxConfiguration>,
     runtime: &RuntimeEnv,
 ) -> Result<std::process::Output, std::io::Error> {
@@ -1513,9 +1568,10 @@ mod tests {
             process_env.get("EXPLICIT_ONLY").map(String::as_str),
             Some("explicit")
         );
-        assert!(
-            !process_env.contains_key("SECRET_ONLY"),
-            "None mode relies on secrets captured in RuntimeEnv"
+        assert_eq!(
+            process_env.get("SECRET_ONLY").map(String::as_str),
+            Some("secret"),
+            "explicit secrets reach the process in None mode too"
         );
     }
 
@@ -1580,7 +1636,7 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_process_streams_normalized_tagged_lines() {
         let tmp = tempfile::tempdir().unwrap();
-        let env = IndexMap::new();
+        let env: IndexMap<String, String> = IndexMap::new();
         let (program, args) = command_that_writes_stdout_and_stderr();
         let mut process = spawn_process(&program, &args, tmp.path(), &env).unwrap();
         let mut lines = Vec::new();
@@ -1643,7 +1699,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_process_with_replacements_keeps_output_handling_host_side() {
         let tmp = tempfile::tempdir().unwrap();
-        let process_env = IndexMap::new();
+        let process_env: IndexMap<String, String> = IndexMap::new();
         let mut replacements = HashMap::new();
         replacements.insert("RAW_PREFIX".to_string(), "$PREFIX".to_string());
         replacements.insert("raw-secret".to_string(), "***".to_string());

@@ -43,13 +43,19 @@ pub(crate) trait ShellDialect: Send + Sync {
     /// as the default when no interpreter is specified.
     fn default_interpreter(&self) -> &'static str;
 
-    /// Returns the shell preamble inserted at the top of `conda_build.*`.
-    fn preamble(&self, activation_script_path: &Path) -> String;
+    /// Returns the shell preamble inserted at the top of `conda_build.*`. It
+    /// sources `activation_script_path` unless the environment is already
+    /// activated; without an activation script the preamble never activates.
+    fn preamble(&self, activation_script_path: Option<&Path>) -> String;
 
-    /// Returns the process invocation used to execute the generated native wrapper script.
+    /// Returns the process invocation used to execute the generated native
+    /// wrapper script from a process started in `start_dir`. Its program is
+    /// the executable of [`Self::shell`], which callers may replace with the
+    /// resolved path of that executable.
     fn command_to_run_script(
         &self,
         build_script_path: &Path,
+        start_dir: &Path,
         context: &ExecutionContext,
     ) -> CommandSpec;
 
@@ -67,6 +73,28 @@ pub(crate) trait ShellDialect: Send + Sync {
     fn native_section_script_command(&self, _script_path: &Path) -> Option<Vec<String>> {
         None
     }
+
+    /// Returns the preamble of the wrapper `script_path` that replays the
+    /// steps of a build (see [`Self::preamble`]). It makes the wrapper run in
+    /// the architecture [`Self::command_to_run_script`] runs wrappers in,
+    /// however the wrapper is started, before it activates with
+    /// `activation_script_path` unless the environment is already activated.
+    fn replay_preamble(
+        &self,
+        _script_path: &Path,
+        activation_script_path: &Path,
+        _context: &ExecutionContext,
+    ) -> String {
+        self.preamble(Some(activation_script_path))
+    }
+
+    /// Returns wrapper lines running the native script `script_path` in a
+    /// new process of this shell, which inherits only the exported
+    /// environment and runs in the architecture
+    /// [`Self::command_to_run_script`] runs wrappers in. When that process
+    /// fails, the wrapper exits with its status, whatever shell error options
+    /// (such as `set -e`) activation left in effect.
+    fn child_script_command(&self, script_path: &Path, context: &ExecutionContext) -> String;
 
     /// Wraps a non-empty section body in an isolated shell scope so its
     /// step-local `env` and shell state don't leak into later sections and a
@@ -303,6 +331,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
     #[test]
     fn cmd_switches_between_supported_windows_architectures() {
         let script = std::path::Path::new("work/conda_build.bat");
+        let work_dir = std::path::Path::new("work");
         let dialect = shell_dialect(Platform::Win64);
 
         let x64_to_arm = ExecutionContext::shared(
@@ -311,7 +340,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             Platform::WinArm64,
             Platform::WinArm64,
         );
-        let arm_command = dialect.command_to_run_script(script, &x64_to_arm);
+        let arm_command = dialect.command_to_run_script(script, work_dir, &x64_to_arm);
         assert_eq!(arm_command.program, "cmd.exe");
         assert_eq!(arm_command.args[..3], ["/d", "/v:on", "/c"]);
         assert!(arm_command.args[3].contains("/machine arm64"));
@@ -321,7 +350,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
         let spaced_script = std::path::Path::new("work/conda build.bat");
         assert!(
             dialect
-                .command_to_run_script(spaced_script, &x64_to_arm)
+                .command_to_run_script(spaced_script, work_dir, &x64_to_arm)
                 .args[3]
                 .contains(r#"cmd.exe /d /c "conda build.bat""#)
         );
@@ -332,7 +361,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             Platform::Win64,
             Platform::Win64,
         );
-        let x64_command = dialect.command_to_run_script(script, &arm_to_x64);
+        let x64_command = dialect.command_to_run_script(script, work_dir, &arm_to_x64);
         assert!(x64_command.args[3].contains("/machine amd64"));
 
         let x64_to_x86 = ExecutionContext::shared(
@@ -341,7 +370,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             Platform::Win32,
             Platform::Win32,
         );
-        let x86_command = dialect.command_to_run_script(script, &x64_to_x86);
+        let x86_command = dialect.command_to_run_script(script, work_dir, &x64_to_x86);
         assert!(x86_command.args[3].contains("/machine x86"));
         assert!(
             x86_command.args[3].contains(r"%SystemRoot%\SysWOW64\cmd.exe"),
@@ -356,7 +385,9 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             Platform::Win64,
         );
         assert_eq!(
-            dialect.command_to_run_script(script, &same_arch).args,
+            dialect
+                .command_to_run_script(script, work_dir, &same_arch)
+                .args,
             ["/d", "/c", "work/conda_build.bat"]
         );
         assert_eq!(
@@ -393,7 +424,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
     #[test]
     fn bash_preamble_enables_tracing_after_activation() {
         let preamble =
-            shell_dialect(Platform::Linux64).preamble(std::path::Path::new("build_env.sh"));
+            shell_dialect(Platform::Linux64).preamble(Some(std::path::Path::new("build_env.sh")));
         let activation = preamble
             .find("source")
             .expect("preamble sources activation");

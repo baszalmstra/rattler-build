@@ -62,6 +62,7 @@ pub(crate) fn resolve_process_env(
                 .map(|(name, value)| (name.to_owned(), value.to_owned()))
                 .collect::<IndexMap<_, _>>();
             process_env.extend(env_vars.clone());
+            process_env.extend(secrets.clone());
             process_env
         }
     }
