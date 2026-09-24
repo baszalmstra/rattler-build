@@ -18,29 +18,47 @@ impl ShellDialect for BashDialect {
         "bash"
     }
 
-    fn preamble(&self, activation_script_path: &std::path::Path) -> String {
+    fn preamble(&self, activation_script_path: Option<&Path>) -> String {
+        let activation = activation_script_path
+            .map(|path| {
+                format!(
+                    r#"if [ -z ${{CONDA_BUILD+x}} ]; then
+    source "{}"
+fi
+"#,
+                    path.to_string_lossy()
+                )
+            })
+            .unwrap_or_default();
         format!(
             r#"#!/usr/bin/env bash
 set -e
 ## Start of bash preamble
-if [ -z ${{CONDA_BUILD+x}} ]; then
-    source "{}"
-fi
-## End of preamble
+{activation}## End of preamble
 # Trace each command as it runs so a failing line is visible (see #2264).
 # Placed after activation so the sourced environment setup is not traced.
 set -x
-"#,
-            activation_script_path.to_string_lossy()
+"#
         )
     }
 
     fn command_to_run_script(
         &self,
         build_script_path: &Path,
+        _start_dir: &Path,
         _context: &ExecutionContext,
     ) -> CommandSpec {
         CommandSpec::new("bash", [build_script_path.to_string_lossy().into_owned()])
+    }
+
+    /// `$BASH` is the executable running the wrapper, so the child does not
+    /// depend on the activated `PATH` to find a shell. The explicit `exit`
+    /// stops the wrapper even when activation turned `set -e` off.
+    fn child_script_command(&self, script_path: &Path, _context: &ExecutionContext) -> String {
+        format!(
+            "\"$BASH\" {} || exit $?\n",
+            super::quote_arg(&self.shell(), &script_path.to_string_lossy())
+        )
     }
 
     fn replacements_template(&self) -> &'static str {

@@ -26,7 +26,7 @@ use crate::{
     render::resolved_dependencies::{
         FinalizedDependencies, RunExportsDownload, install_environments, resolve_dependencies,
     },
-    script::prepare_build_plan_execution_args,
+    script::{prepare_build_plan_execution_args, run_build_plan},
     source::{copy_dir::CopyDir, fetch_sources},
     utils::remove_dir_all_force,
 };
@@ -350,7 +350,7 @@ impl Output {
             self.build_configuration.experimental,
         )
         .into_diagnostic()?;
-        rattler_build_script::run_script(exec_args)
+        run_build_plan(&staging.build.plan, exec_args)
             .await
             .into_diagnostic()?;
 

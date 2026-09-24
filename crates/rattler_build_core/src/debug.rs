@@ -322,15 +322,11 @@ fn run_build_script_platform(work_dir: &Path, trace: bool) -> std::io::Result<De
     require_file(work_dir, "conda_build.sh")?;
 
     let bash_flag = if trace { "-ex" } else { "-e" };
-    let script = format!(
-        "cd '{}' && source build_env.sh && bash {} conda_build.sh",
-        work_dir.display(),
-        bash_flag,
-    );
-
     let output = Command::new("bash")
-        .arg("-c")
-        .arg(&script)
+        .arg(bash_flag)
+        .arg("conda_build.sh")
+        .current_dir(work_dir)
+        .env_remove("CONDA_BUILD")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()?;
@@ -348,13 +344,12 @@ fn run_build_script_interactive_platform(work_dir: &Path, trace: bool) -> std::i
     require_file(work_dir, "conda_build.sh")?;
 
     let bash_flag = if trace { "-ex" } else { "-e" };
-    let script = format!(
-        "cd '{}' && source build_env.sh && bash {} conda_build.sh",
-        work_dir.display(),
-        bash_flag,
-    );
-
-    let status = Command::new("bash").arg("-c").arg(&script).status()?;
+    let status = Command::new("bash")
+        .arg(bash_flag)
+        .arg("conda_build.sh")
+        .current_dir(work_dir)
+        .env_remove("CONDA_BUILD")
+        .status()?;
     Ok(status.code().unwrap_or(1))
 }
 
@@ -572,5 +567,42 @@ impl crate::metadata::Output {
         output.create_build_script().await.into_diagnostic()?;
 
         Ok(output)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::error::Error;
+
+    use fs_err as fs;
+
+    use super::{run_build_script, run_build_script_interactive};
+
+    #[test]
+    fn debug_run_activates_once_when_hook_clears_marker() -> Result<(), Box<dyn Error>> {
+        let work_dir = tempfile::tempdir()?;
+        fs::write(
+            work_dir.path().join("build_env.sh"),
+            "printf 'activated\\n' >> activations.txt\nunset CONDA_BUILD\n",
+        )?;
+        fs::write(
+            work_dir.path().join("conda_build.sh"),
+            "if [ -z \"${CONDA_BUILD+x}\" ]; then source build_env.sh; fi\nprintf 'built\\n'\n",
+        )?;
+
+        let result = run_build_script(work_dir.path(), false)?;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(work_dir.path().join("activations.txt"))?,
+            "activated\n"
+        );
+
+        let status = run_build_script_interactive(work_dir.path(), false)?;
+        assert_eq!(status, 0);
+        assert_eq!(
+            fs::read_to_string(work_dir.path().join("activations.txt"))?,
+            "activated\nactivated\n"
+        );
+        Ok(())
     }
 }

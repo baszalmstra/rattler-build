@@ -4,11 +4,11 @@ from helpers import RattlerBuild, get_extracted_package
 
 
 def test_build_steps(rattler_build: RattlerBuild, recipes: Path, tmp_path: Path):
-    """`build.steps` compiles into the generated wrapper and runs in order.
+    """`build.steps` run in order as independent processes.
 
-    Run steps execute as scoped sections: one writes via the build-time
-    `$PREFIX`, one uses step-local `env`, one proves env does not leak, and one
-    runs from a step-local `cwd`.
+    Every step starts from the captured activated environment: one writes via
+    the build-time `$PREFIX`, one uses step-local `env`, one proves that env
+    does not reach the next step, and one runs from a step-local `cwd`.
     """
     rattler_build.build(
         recipes / "build_steps", tmp_path, extra_args=["--experimental"]
@@ -25,9 +25,9 @@ def test_build_steps(rattler_build: RattlerBuild, recipes: Path, tmp_path: Path)
     assert step3.exists(), "third step did not run"
     assert cwd_pwd.exists(), "cwd step did not run in its target directory"
     assert "hello-from-step" in step2.read_text(), (
-        "step-local env did not reach the section"
+        "step-local env did not reach the step"
     )
-    assert "unset" in step3.read_text(), "step-local env leaked to a later section"
+    assert "unset" in step3.read_text(), "step-local env leaked to a later step"
 
 
 def test_default_build_script_still_runs(

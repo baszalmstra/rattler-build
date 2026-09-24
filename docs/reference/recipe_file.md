@@ -619,8 +619,10 @@ requirements:
 `--experimental`. `script` and `steps` are mutually exclusive, including
 `steps: []`.
 
-Each step is a scoped build-wrapper section. Step-local `env` values and `cwd`
-changes apply only to that step. A step supports:
+The build and host environments are activated once, and each step then runs as
+its own process started from the activated environment. Step-local `env`
+values and `cwd` apply only to that step, and nothing a step changes carries
+over to later steps. A step supports:
 
 - **`run`** - Required inline command, multiline string, or list of commands.
 - **`if`** - Optional Jinja selector expression evaluated before the step runs. Do not wrap expressions in `${{ }}`.

@@ -5,7 +5,8 @@ package:
 build:
   number: 0
   # Exercises `build.steps`: ordered run steps, per-step `if`, and step-local
-  # `env`. Each step becomes one scoped section of the generated build wrapper.
+  # `env`. Each step runs as its own process, started from the environment
+  # captured after activating once.
   steps:
     - if: unix
       run: |
