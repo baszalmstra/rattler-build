@@ -1,0 +1,257 @@
+package:
+  name: build_step_graph_test
+  version: "1.0.0"
+
+build:
+  number: 0
+  # Exercises the static `build.steps` graph with real work, host and build
+  # roots. Steps without `inputs`/`outputs` are barriers that run alone, in
+  # list order; steps declaring both run as soon as their producers and
+  # `depends_on` steps succeeded, possibly at the same time. Probe steps watch
+  # for a few seconds for the `<step>.started` marker of a step that must not
+  # run yet and record in `probes/` whether it appeared (`met`) or not
+  # (`alone`); `collect` copies the probes into the package.
+  steps:
+    # Barrier: prepares directories and leaves stale copies of generated
+    # files in the work directory, as an earlier build might, which must not
+    # make their consumers start early.
+    - run:
+        - if: unix
+          then: |
+            mkdir -p gen probes tree/nested "$PREFIX/share/graph" "$BUILD_PREFIX/graph"
+            echo stale > gen/message.txt
+            echo stale > tree/nested/value.txt
+          else: |
+            mkdir gen probes tree\nested "%PREFIX%\share\graph" "%BUILD_PREFIX%\graph"
+            echo stale> gen\message.txt
+            echo stale> tree\nested\value.txt
+
+    # Epoch 1: two independent declared steps.
+    - id: left
+      inputs: []
+      outputs:
+        - root: work
+          path: probes/left.txt
+      run:
+        - if: unix
+          then: echo left > probes/left.txt
+          else: echo left> probes\left.txt
+    - id: right
+      inputs: []
+      outputs:
+        - root: work
+          path: probes/right.txt
+      run:
+        - if: unix
+          then: echo right > probes/right.txt
+          else: echo right> probes\right.txt
+
+    # Barrier: starts only after the whole first epoch finished.
+    - run:
+        - if: unix
+          then: |
+            for probe in left right; do if [ -e "probes/$probe.txt" ]; then echo "$probe"; fi; done > probes/epoch.txt
+          else: |
+            if exist probes\left.txt echo left>> probes\epoch.txt
+            if exist probes\right.txt echo right>> probes\epoch.txt
+
+    # Epoch 2. The consumer is listed before its producer and a stale input
+    # exists, but it only starts once the producer succeeded. On Windows and
+    # macOS it spells its input in a different case, which names the same
+    # artifact there.
+    - id: consumer
+      inputs:
+        - root: work
+          path: ${{ "GEN/Message.txt" if win or osx else "gen/message.txt" }}
+      outputs:
+        - root: host
+          path: share/graph/message.txt
+      run:
+        - if: unix
+          then: |
+            touch consumer.started
+            cp gen/message.txt "$PREFIX/share/graph/message.txt"
+          else: |
+            echo started> consumer.started
+            copy /y gen\message.txt "%PREFIX%\share\graph\message.txt"
+    - id: producer
+      inputs: []
+      outputs:
+        - root: work
+          path: gen/message.txt
+        - root: work
+          path: probes/producer.txt
+      run:
+        - if: unix
+          then: |
+            polls=0
+            while [ ! -e consumer.started ] && [ "$polls" -lt 30 ]; do polls=$((polls + 1)); sleep 0.1; done
+            if [ -e consumer.started ]; then echo met; else echo alone; fi > probes/producer.txt
+            echo fresh > gen/message.txt
+          else: |
+            set /a polls=0
+            :wait
+            if exist consumer.started goto met
+            set /a polls+=1
+            if %polls% geq 3 goto alone
+            ping -n 2 127.0.0.1 > nul
+            goto wait
+            :met
+            echo met> probes\producer.txt
+            goto produce
+            :alone
+            echo alone> probes\producer.txt
+            :produce
+            echo fresh> gen\message.txt
+
+    # An explicit edge orders `late` after `early` without any artifact
+    # between them.
+    - id: late
+      depends_on: [early]
+      inputs: []
+      outputs:
+        - root: work
+          path: probes/late.txt
+      run:
+        - if: unix
+          then: |
+            touch late.started
+            if [ -e early.done ]; then echo seen; else echo missing; fi > probes/late.txt
+          else: |
+            echo started> late.started
+            if exist early.done (echo seen> probes\late.txt) else (echo missing> probes\late.txt)
+    - id: early
+      inputs: []
+      outputs:
+        - root: work
+          path: early.done
+        - root: work
+          path: probes/early.txt
+      run:
+        - if: unix
+          then: |
+            polls=0
+            while [ ! -e late.started ] && [ "$polls" -lt 30 ]; do polls=$((polls + 1)); sleep 0.1; done
+            if [ -e late.started ]; then echo met; else echo alone; fi > probes/early.txt
+            echo done > early.done
+          else: |
+            set /a polls=0
+            :wait
+            if exist late.started goto met
+            set /a polls+=1
+            if %polls% geq 3 goto alone
+            ping -n 2 127.0.0.1 > nul
+            goto wait
+            :met
+            echo met> probes\early.txt
+            goto finish
+            :alone
+            echo alone> probes\early.txt
+            :finish
+            echo done> early.done
+
+    # A tree output owns everything below it: an exact input inside the tree
+    # waits for the tree's producer, and a glob input waits for every
+    # producer of a file it matches, across the work directory and the host
+    # and build prefixes.
+    - id: tree-reader
+      inputs:
+        - root: work
+          path: ${{ "Tree/Nested/Value.TXT" if win or osx else "tree/nested/value.txt" }}
+      outputs:
+        - root: build
+          path: graph/tool.txt
+      run:
+        - if: unix
+          then: |
+            touch tree-reader.started
+            cp tree/nested/value.txt "$BUILD_PREFIX/graph/tool.txt"
+          else: |
+            echo started> tree-reader.started
+            copy /y tree\nested\value.txt "%BUILD_PREFIX%\graph\tool.txt"
+    - id: tree
+      inputs: []
+      outputs:
+        - root: work
+          path: tree
+          kind: tree
+        - root: work
+          path: probes/tree.txt
+      run:
+        - if: unix
+          then: |
+            polls=0
+            while [ ! -e tree-reader.started ] && [ "$polls" -lt 30 ]; do polls=$((polls + 1)); sleep 0.1; done
+            if [ -e tree-reader.started ]; then echo met; else echo alone; fi > probes/tree.txt
+            mkdir -p tree/nested
+            echo fresh > tree/nested/value.txt
+          else: |
+            set /a polls=0
+            :wait
+            if exist tree-reader.started goto met
+            set /a polls+=1
+            if %polls% geq 3 goto alone
+            ping -n 2 127.0.0.1 > nul
+            goto wait
+            :met
+            echo met> probes\tree.txt
+            goto produce
+            :alone
+            echo alone> probes\tree.txt
+            :produce
+            if not exist tree\nested mkdir tree\nested
+            echo fresh> tree\nested\value.txt
+    - id: glob-reader
+      inputs:
+        - root: build
+          path: ${{ "Graph/*.TXT" if win or osx else "graph/*.txt" }}
+          kind: glob
+      outputs:
+        - root: host
+          path: share/graph/tools.txt
+      run:
+        - if: unix
+          then: cat "$BUILD_PREFIX"/graph/*.txt > "$PREFIX/share/graph/tools.txt"
+          else: for %%f in ("%BUILD_PREFIX%\graph\*.txt") do type "%%~f">> "%PREFIX%\share\graph\tools.txt"
+
+    # Undeclared steps stay sequential barriers, also when selected per
+    # platform and named: `legacy-b` never runs while `legacy-a` does.
+    - if: unix
+      id: legacy-a
+      run: |
+        touch legacy-a.started
+        polls=0
+        while [ ! -e legacy-b.started ] && [ "$polls" -lt 30 ]; do polls=$((polls + 1)); sleep 0.1; done
+        if [ -e legacy-b.started ]; then echo met; else echo alone; fi > probes/legacy-a.txt
+    - if: win
+      id: legacy-a
+      run: |
+        echo started> legacy-a.started
+        set /a polls=0
+        :wait
+        if exist legacy-b.started goto met
+        set /a polls+=1
+        if %polls% geq 3 goto alone
+        ping -n 2 127.0.0.1 > nul
+        goto wait
+        :met
+        echo met> probes\legacy-a.txt
+        exit /b 0
+        :alone
+        echo alone> probes\legacy-a.txt
+    - if: unix
+      id: legacy-b
+      run: touch legacy-b.started
+    - if: win
+      id: legacy-b
+      run: echo started> legacy-b.started
+
+    # Barrier: packages the probes.
+    - run:
+        - if: unix
+          then: |
+            mkdir -p "$PREFIX/share/graph/probes"
+            cp probes/*.txt "$PREFIX/share/graph/probes/"
+          else: |
+            mkdir "%PREFIX%\share\graph\probes"
+            copy /y probes\*.txt "%PREFIX%\share\graph\probes"

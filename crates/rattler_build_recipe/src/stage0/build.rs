@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use itertools::Itertools as _;
 use marked_yaml::Span;
+use rattler_build_script::{StepInputKind, StepOutputKind, StepRoot};
 use rattler_conda_types::{Flag, NoArchType, package::EntryPoint};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +28,9 @@ pub struct VariantKeyUsage {
 /// A single build step.
 ///
 /// Steps are an ordered, GitHub-Actions-style alternative to a monolithic
-/// `build.script`. A step is an inline `run` script.
+/// `build.script`. A step is an inline `run` script. Steps that declare both
+/// `inputs` and `outputs` join the static step graph; steps that declare
+/// neither are sequential barriers.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Step {
@@ -60,6 +63,50 @@ pub struct RunStep {
     /// Environment variables scoped to this step only.
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub env: indexmap::IndexMap<String, Value<String>>,
+
+    /// Optional explicit step identity, referenced by `depends_on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Declared step inputs. `None` (absent) differs from an explicit empty
+    /// list: only steps declaring both `inputs` and `outputs` are scheduled
+    /// in the step graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Vec<StepInputDeclaration>>,
+
+    /// Declared step outputs. See [`RunStep::inputs`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<Vec<StepOutputDeclaration>>,
+
+    /// Explicit ordering edges to other steps, by `id`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+}
+
+/// A declared step input before evaluation. The path may be templated.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StepInputDeclaration {
+    /// The root namespace the path is relative to.
+    pub root: StepRoot,
+    /// Path (or glob pattern) relative to `root`.
+    pub path: Value<String>,
+    /// Whether `path` names a single file or a glob pattern.
+    #[serde(default)]
+    pub kind: StepInputKind,
+}
+
+/// A declared step output before evaluation. The path may be templated.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StepOutputDeclaration {
+    /// The root namespace the path is relative to.
+    pub root: StepRoot,
+    /// Path relative to `root`.
+    pub path: Value<String>,
+    /// Whether `path` names a single file or a whole directory tree.
+    #[serde(default)]
+    pub kind: StepOutputKind,
 }
 
 impl Step {
@@ -81,6 +128,10 @@ impl RunStep {
             interpreter,
             cwd,
             env,
+            id: _,
+            inputs,
+            outputs,
+            depends_on: _,
         } = self;
 
         let mut vars = run.used_variables();
@@ -96,6 +147,12 @@ impl RunStep {
         }
         for value in env.values() {
             vars.extend(value.used_variables());
+        }
+        for input in inputs.iter().flatten() {
+            vars.extend(input.path.used_variables());
+        }
+        for output in outputs.iter().flatten() {
+            vars.extend(output.path.used_variables());
         }
 
         vars.sort();

@@ -4,6 +4,7 @@
 //! [`generate_build_script`], executes them with [`run_script`], and provides
 //! subprocess output handling via [`run_process_with_replacements`].
 
+use crate::GraphStep;
 use crate::sandbox::SandboxConfiguration;
 use crate::script::{Script, ScriptContent};
 use crate::{
@@ -21,6 +22,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::LazyLock;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, FramedRead};
@@ -238,6 +240,7 @@ impl Script {
                 env: IndexMap::new(),
                 cwd: section_cwd,
                 label: None,
+                graph: GraphStep::default(),
             }],
             env_vars,
             secrets,
@@ -596,6 +599,11 @@ pub struct BuildScriptSection {
     pub cwd: Option<PathBuf>,
     /// Optional annotation rendered as a boundary comment above the section.
     pub label: Option<String>,
+    /// The build-step declarations of this section: its id, declared inputs
+    /// and outputs, and explicit dependencies. Only [`crate::run_steps`]
+    /// schedules by them; the default declares nothing, which makes the
+    /// section a sequential barrier there.
+    pub graph: GraphStep,
 }
 
 /// One unit of a generated build wrapper: content run in a single interpreter,
@@ -964,6 +972,13 @@ fn find_rattler_sandbox(runtime: &RuntimeEnv) -> Option<PathBuf> {
         .next()
 }
 
+/// Serializes logging a line of subprocess output. Build steps run their
+/// processes concurrently, each appending to the build log through its own
+/// file handle: writing and flushing a whole line inside this section keeps
+/// the bytes of different lines from interleaving.
+static OUTPUT_LINES: LazyLock<futures::lock::Mutex<()>> =
+    LazyLock::new(|| futures::lock::Mutex::new(()));
+
 /// Spawns a process and replaces the given strings in the output with the given replacements.
 /// This is used to replace the host prefix with $PREFIX and the build prefix with $BUILD_PREFIX
 #[allow(clippy::too_many_arguments)]
@@ -1020,20 +1035,26 @@ pub(crate) async fn run_process_with_replacements<K: AsRef<OsStr>, V: AsRef<OsSt
                     .iter()
                     .fold(line.text, |acc, (from, to)| acc.replace(from, to));
 
-                if line.is_stderr {
-                    stderr_log.push_str(&filtered_line);
-                    stderr_log.push('\n');
+                let captured = if line.is_stderr {
+                    &mut stderr_log
                 } else {
-                    stdout_log.push_str(&filtered_line);
-                    stdout_log.push('\n');
-                }
+                    &mut stdout_log
+                };
+                let record_start = captured.len();
+                captured.push_str(&filtered_line);
+                captured.push('\n');
+                let record = &captured[record_start..];
 
-                // Write to log file
-                if let Err(e) = log_file.write_all(filtered_line.as_bytes()).await {
+                // Concurrent build steps log through this section, so each
+                // line reaches the build log in one piece and in the same
+                // order as the console.
+                let _serialized = OUTPUT_LINES.lock().await;
+                let logged = match log_file.write_all(record.as_bytes()).await {
+                    Ok(()) => log_file.flush().await,
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = logged {
                     tracing::warn!("Failed to write to build log: {:?}", e);
-                }
-                if let Err(e) = log_file.write_all(b"\n").await {
-                    tracing::warn!("Failed to write newline to build log: {:?}", e);
                 }
 
                 tracing::info!("{}", filtered_line);
@@ -1195,6 +1216,7 @@ mod tests {
                 env: IndexMap::new(),
                 cwd: None,
                 label: None,
+                graph: GraphStep::default(),
             }],
             env_vars: IndexMap::new(),
             secrets: IndexMap::new(),
@@ -1480,6 +1502,7 @@ mod tests {
                 env: IndexMap::new(),
                 cwd: None,
                 label: None,
+                graph: GraphStep::default(),
             }],
             env_vars: IndexMap::new(),
             secrets: IndexMap::new(),
@@ -2029,6 +2052,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: IndexMap::new(),
                     cwd: None,
                     label: Some("step 0".to_string()),
+                    graph: GraphStep::default(),
                 },
                 BuildScriptSection {
                     interpreter: None,
@@ -2036,6 +2060,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: IndexMap::new(),
                     cwd: None,
                     label: Some("step 1".to_string()),
+                    graph: GraphStep::default(),
                 },
             ],
             ..base
@@ -2125,6 +2150,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: IndexMap::new(),
                     cwd: None,
                     label: Some("step 0".to_string()),
+                    graph: GraphStep::default(),
                 },
                 BuildScriptSection {
                     interpreter: None,
@@ -2132,6 +2158,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: IndexMap::new(),
                     cwd: None,
                     label: Some("step 1".to_string()),
+                    graph: GraphStep::default(),
                 },
             ],
             ..base
@@ -2175,6 +2202,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: env0,
                     cwd: Some(PathBuf::from("/tmp/step0")),
                     label: Some("step 0".to_string()),
+                    graph: GraphStep::default(),
                 },
                 BuildScriptSection {
                     interpreter: None,
@@ -2182,6 +2210,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
                     env: IndexMap::new(),
                     cwd: None,
                     label: Some("step 1".to_string()),
+                    graph: GraphStep::default(),
                 },
             ],
             ..base

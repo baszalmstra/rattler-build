@@ -2,6 +2,7 @@ use marked_yaml::{
     Node,
     types::{MarkedMappingNode, MarkedScalarNode},
 };
+use rattler_build_script::{StepInputKind, StepOutputKind, StepRoot};
 use rattler_build_yaml_parser::ParseError;
 use rattler_conda_types::NoArchType;
 
@@ -9,7 +10,8 @@ use crate::stage0::{
     Conditional, ConditionalList, Item, JinjaExpression, NestedItemList,
     build::{
         BinaryRelocation, Build, BuildPlan, DynamicLinking, ForceFileType, PostProcess,
-        PrefixDetection, PrefixIgnore, PythonBuild, RunStep, Step, VariantKeyUsage,
+        PrefixDetection, PrefixIgnore, PythonBuild, RunStep, Step, StepInputDeclaration,
+        StepOutputDeclaration, VariantKeyUsage,
     },
     parser::helpers::get_span,
     types::{IncludeExclude, JinjaTemplate, Value},
@@ -401,6 +403,10 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
     let mut interpreter = None;
     let mut cwd = None;
     let mut env = indexmap::IndexMap::new();
+    let mut id = None;
+    let mut inputs = None;
+    let mut outputs = None;
+    let mut depends_on = Vec::new();
 
     for (key_node, value_node) in mapping.iter() {
         let key = key_node.as_str();
@@ -432,13 +438,42 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
                     env.insert(env_key, env_value);
                 }
             }
+            "id" => {
+                id = Some(parse_step_id("steps.id", value_node)?);
+            }
+            "inputs" => {
+                inputs = Some(parse_step_declarations(
+                    "steps.inputs",
+                    value_node,
+                    parse_step_input,
+                )?);
+            }
+            "outputs" => {
+                outputs = Some(parse_step_declarations(
+                    "steps.outputs",
+                    value_node,
+                    parse_step_output,
+                )?);
+            }
+            "depends_on" => {
+                let sequence = value_node.as_sequence().ok_or_else(|| {
+                    ParseError::expected_type("sequence", "non-sequence", get_span(value_node))
+                        .with_message("Expected step 'depends_on' to be a list of step ids")
+                })?;
+                depends_on = sequence
+                    .iter()
+                    .map(|item| parse_step_id("steps.depends_on", item))
+                    .collect::<Result<_, _>>()?;
+            }
             _ => {
                 return Err(ParseError::invalid_value(
                     "steps",
                     format!("unknown field '{}' in step", key),
                     *key_node.span(),
                 )
-                .with_suggestion("Valid fields are: run, if, interpreter, cwd, env"));
+                .with_suggestion(
+                    "Valid fields are: run, if, interpreter, cwd, env, id, inputs, outputs, depends_on",
+                ));
             }
         }
     }
@@ -448,6 +483,25 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
             .with_suggestion("Add a 'run:' field with the script to execute")
     })?;
 
+    if inputs.is_some() != outputs.is_some() {
+        let (present, missing) = if inputs.is_some() {
+            ("inputs", "outputs")
+        } else {
+            ("outputs", "inputs")
+        };
+        let step = id
+            .as_deref()
+            .map_or_else(|| "step".to_string(), |id| format!("step '{id}'"));
+        return Err(ParseError::invalid_value(
+            "steps",
+            format!("{step} declares '{present}' but not '{missing}'"),
+            get_span(node),
+        )
+        .with_suggestion(format!(
+            "Declare both 'inputs' and 'outputs' (use `{missing}: []` for none) to schedule the step in the step graph, or omit both to run it as a sequential barrier"
+        )));
+    }
+
     Ok(Step::Run(RunStep {
         run,
         condition,
@@ -455,7 +509,189 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
         interpreter,
         cwd,
         env,
+        id,
+        inputs,
+        outputs,
+        depends_on,
     }))
+}
+
+/// Parse a step id (or a `depends_on` reference to one). Ids are plain,
+/// untemplated names so they stay stable across variants.
+fn parse_step_id(field_name: &str, node: &Node) -> Result<String, ParseError> {
+    let scalar = node.as_scalar().ok_or_else(|| {
+        ParseError::expected_type("scalar", "non-scalar", get_span(node))
+            .with_message(format!("Expected '{field_name}' to be a step id string"))
+    })?;
+    let id = scalar.as_str();
+    let valid = !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if !valid {
+        return Err(ParseError::invalid_value(
+            field_name,
+            format!("invalid step id '{id}'; expected a non-empty name of [A-Za-z0-9_.-]"),
+            *scalar.span(),
+        ));
+    }
+    Ok(id.to_string())
+}
+
+/// Parse an `inputs` / `outputs` list, where every entry is a mapping.
+fn parse_step_declarations<T>(
+    field_name: &str,
+    node: &Node,
+    parse_entry: fn(&str, &MarkedMappingNode) -> Result<T, ParseError>,
+) -> Result<Vec<T>, ParseError> {
+    let sequence = node.as_sequence().ok_or_else(|| {
+        ParseError::expected_type("sequence", "non-sequence", get_span(node)).with_message(format!(
+            "Expected '{field_name}' to be a list of `{{ root, path, kind }}` mappings"
+        ))
+    })?;
+    sequence
+        .iter()
+        .map(|item| {
+            let mapping = item.as_mapping().ok_or_else(|| {
+                ParseError::expected_type("mapping", "non-mapping", get_span(item)).with_message(
+                    format!(
+                        "Expected each '{field_name}' entry to be a `{{ root, path }}` mapping"
+                    ),
+                )
+            })?;
+            parse_entry(field_name, mapping)
+        })
+        .collect()
+}
+
+/// The `root`, `path` and raw `kind` fields shared by input and output entries.
+struct DeclarationFields<'a> {
+    root: StepRoot,
+    path: Value<String>,
+    kind: Option<&'a MarkedScalarNode>,
+}
+
+fn parse_declaration_fields<'a>(
+    field_name: &str,
+    mapping: &'a MarkedMappingNode,
+    valid_kinds: &str,
+) -> Result<DeclarationFields<'a>, ParseError> {
+    let mut root = None;
+    let mut path = None;
+    let mut kind = None;
+
+    for (key_node, value_node) in mapping.iter() {
+        match key_node.as_str() {
+            "root" => {
+                let scalar = expect_scalar(field_name, "root", value_node)?;
+                root = Some(match scalar.as_str() {
+                    "work" => StepRoot::Work,
+                    "host" => StepRoot::Host,
+                    "build" => StepRoot::Build,
+                    other => {
+                        return Err(ParseError::invalid_value(
+                            field_name,
+                            format!("unknown root '{other}'"),
+                            *scalar.span(),
+                        )
+                        .with_suggestion("Valid roots are: work, host, build"));
+                    }
+                });
+            }
+            "path" => {
+                let value: Value<String> = parse_value_with_name(value_node, field_name)?;
+                if value.as_concrete().is_some_and(|path| path.is_empty()) {
+                    return Err(ParseError::invalid_value(
+                        field_name,
+                        "path must not be empty",
+                        get_span(value_node),
+                    ));
+                }
+                path = Some(value);
+            }
+            "kind" => {
+                kind = Some(expect_scalar(field_name, "kind", value_node)?);
+            }
+            other => {
+                return Err(ParseError::invalid_value(
+                    field_name,
+                    format!("unknown field '{other}'"),
+                    *key_node.span(),
+                )
+                .with_suggestion(format!(
+                    "Valid fields are: root, path, kind ({valid_kinds})"
+                )));
+            }
+        }
+    }
+
+    let span = *mapping.span();
+    let root = root.ok_or_else(|| {
+        ParseError::invalid_value(field_name, "missing required field 'root'", span)
+            .with_suggestion("Add `root: work`, `root: host` or `root: build`")
+    })?;
+    let path = path.ok_or_else(|| {
+        ParseError::invalid_value(field_name, "missing required field 'path'", span)
+            .with_suggestion("Add a `path:` relative to the root")
+    })?;
+
+    Ok(DeclarationFields { root, path, kind })
+}
+
+fn expect_scalar<'a>(
+    field_name: &str,
+    key: &str,
+    node: &'a Node,
+) -> Result<&'a MarkedScalarNode, ParseError> {
+    node.as_scalar().ok_or_else(|| {
+        ParseError::expected_type("scalar", "non-scalar", get_span(node))
+            .with_message(format!("Expected '{field_name}.{key}' to be a string"))
+    })
+}
+
+fn unknown_kind(field_name: &str, kind: &MarkedScalarNode, valid_kinds: &str) -> ParseError {
+    ParseError::invalid_value(
+        field_name,
+        format!("unknown kind '{}'", kind.as_str()),
+        *kind.span(),
+    )
+    .with_suggestion(format!("Valid kinds are: {valid_kinds}"))
+}
+
+fn parse_step_input(
+    field_name: &str,
+    mapping: &MarkedMappingNode,
+) -> Result<StepInputDeclaration, ParseError> {
+    const VALID_KINDS: &str = "file, glob";
+    let DeclarationFields { root, path, kind } =
+        parse_declaration_fields(field_name, mapping, VALID_KINDS)?;
+    let kind = match kind {
+        None => StepInputKind::File,
+        Some(kind) => match kind.as_str() {
+            "file" => StepInputKind::File,
+            "glob" => StepInputKind::Glob,
+            _ => return Err(unknown_kind(field_name, kind, VALID_KINDS)),
+        },
+    };
+    Ok(StepInputDeclaration { root, path, kind })
+}
+
+fn parse_step_output(
+    field_name: &str,
+    mapping: &MarkedMappingNode,
+) -> Result<StepOutputDeclaration, ParseError> {
+    const VALID_KINDS: &str = "file, tree";
+    let DeclarationFields { root, path, kind } =
+        parse_declaration_fields(field_name, mapping, VALID_KINDS)?;
+    let kind = match kind {
+        None => StepOutputKind::File,
+        Some(kind) => match kind.as_str() {
+            "file" => StepOutputKind::File,
+            "tree" => StepOutputKind::Tree,
+            _ => return Err(unknown_kind(field_name, kind, VALID_KINDS)),
+        },
+    };
+    Ok(StepOutputDeclaration { root, path, kind })
 }
 
 /// Parse a step `if` condition as a verbatim Jinja expression.
@@ -1233,6 +1469,96 @@ steps:
                 assert!(second.cwd.is_some());
                 assert!(second.env.contains_key("FOO"));
             }
+        }
+    }
+
+    #[test]
+    fn test_parse_step_graph_declarations() {
+        let yaml = r#"
+steps:
+  - run: echo legacy
+  - id: compile
+    run: cc -c a.c -o a.o
+    inputs:
+      - root: work
+        path: src/*.c
+        kind: glob
+    outputs:
+      - root: work
+        path: ${{ name }}.o
+      - root: host
+        path: include
+        kind: tree
+  - run: echo empty
+    inputs: []
+    outputs: []
+    depends_on: [compile]
+"#;
+        let node = marked_yaml::parse_yaml(0, yaml).unwrap();
+        let build = parse_build(&node).unwrap();
+        let steps = build.plan.steps().expect("steps mode");
+
+        let [Step::Run(legacy), Step::Run(compile), Step::Run(empty)] = steps else {
+            panic!("expected three run steps, got {steps:?}");
+        };
+
+        assert_eq!(legacy.id, None);
+        assert_eq!(legacy.inputs, None);
+        assert_eq!(legacy.outputs, None);
+
+        assert_eq!(compile.id.as_deref(), Some("compile"));
+        let inputs = compile.inputs.as_deref().expect("declared inputs");
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].root, StepRoot::Work);
+        assert_eq!(inputs[0].kind, StepInputKind::Glob);
+        let outputs = compile.outputs.as_deref().expect("declared outputs");
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].kind, StepOutputKind::File);
+        assert_eq!(outputs[1].root, StepRoot::Host);
+        assert_eq!(outputs[1].kind, StepOutputKind::Tree);
+        assert_eq!(steps[1].used_variables(), vec!["name".to_string()]);
+
+        assert_eq!(empty.inputs.as_deref(), Some(&[][..]));
+        assert_eq!(empty.outputs.as_deref(), Some(&[][..]));
+        assert_eq!(empty.depends_on, vec!["compile".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_step_graph_declarations_are_validated() {
+        let cases = [
+            ("    inputs: []\n", "declares 'inputs' but not 'outputs'"),
+            ("    outputs: []\n", "declares 'outputs' but not 'inputs'"),
+            (
+                "    inputs: [{root: prefix, path: a}]\n    outputs: []\n",
+                "unknown root 'prefix'",
+            ),
+            (
+                "    inputs: [{root: work, path: a, kind: tree}]\n    outputs: []\n",
+                "unknown kind 'tree'",
+            ),
+            (
+                "    inputs: []\n    outputs: [{root: work, path: a, kind: glob}]\n",
+                "unknown kind 'glob'",
+            ),
+            (
+                "    inputs: [{root: work}]\n    outputs: []\n",
+                "missing required field 'path'",
+            ),
+            (
+                "    inputs: [{root: work, path: a, mode: x}]\n    outputs: []\n",
+                "unknown field 'mode'",
+            ),
+            ("    inputs: [a.c]\n    outputs: []\n", "mapping"),
+            ("    id: ${{ name }}\n", "invalid step id"),
+            ("    depends_on: [\"has space\"]\n", "invalid step id"),
+        ];
+
+        for (fields, expected) in cases {
+            let yaml = format!("steps:\n  - run: echo hi\n{fields}");
+            let node = marked_yaml::parse_yaml(0, &yaml).unwrap();
+            let err = parse_build(&node).expect_err(&yaml);
+            let message = format!("{err} {err:?}");
+            assert!(message.contains(expected), "{yaml}\n{message}");
         }
     }
 

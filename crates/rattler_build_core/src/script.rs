@@ -25,12 +25,13 @@ pub use rattler_build_script::{
 
 use crate::{env_vars, metadata::Output};
 use rattler_build_recipe::stage1::build::BuildPlan;
+use rattler_build_script::GraphStep;
 
 /// Prepare execution arguments for a stage1 build plan.
 ///
 /// Package outputs and staging outputs intentionally share this implementation
-/// so `build.script` and `build.steps` resolve content, env, cwd, secrets, and
-/// labels the same way in both places.
+/// so `build.script` and `build.steps` resolve content, env, cwd, secrets,
+/// labels, and step declarations the same way in both places.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_build_plan_execution_args(
     plan: &BuildPlan,
@@ -72,18 +73,18 @@ pub(crate) fn prepare_build_plan_execution_args(
         env_vars.extend(script.env().clone());
     }
 
-    let scripts: Vec<(Script, Option<usize>)> = match plan {
+    let scripts: Vec<(Script, Option<usize>, GraphStep)> = match plan {
         BuildPlan::Steps(steps) => steps
             .iter()
             .enumerate()
-            .map(|(index, step)| (step.to_script(), Some(index)))
+            .map(|(index, step)| (step.to_script(), Some(index), step.graph_step()))
             .collect(),
-        BuildPlan::Script(script) => vec![(script.clone(), None)],
+        BuildPlan::Script(script) => vec![(script.clone(), None, GraphStep::default())],
     };
 
     let mut secrets = IndexMap::new();
     let mut sections = Vec::with_capacity(scripts.len());
-    for (script, step_index) in scripts {
+    for (script, step_index, graph) in scripts {
         let mut section_jinja = Jinja::new(selector_config.clone()).with_context(recipe_context);
         for (key, value) in env_vars.iter().chain(script.env()) {
             section_jinja
@@ -123,6 +124,7 @@ pub(crate) fn prepare_build_plan_execution_args(
             },
             cwd,
             label: step_index.map(|index| format!("step {index}")),
+            graph,
         });
     }
 
@@ -142,8 +144,10 @@ pub(crate) fn prepare_build_plan_execution_args(
 ///
 /// A `build.script` runs activation and its script in one wrapper process.
 /// `build.steps`, even a single step, activate once and run every step in its
-/// own process from the captured activated environment. Package outputs and
-/// staging outputs share this dispatch.
+/// own process from the captured activated environment, as scheduled by the
+/// step graph: steps without declarations run in order, and declared steps
+/// run as soon as the steps they depend on have succeeded. Package outputs
+/// and staging outputs share this dispatch.
 pub(crate) async fn run_build_plan(
     plan: &BuildPlan,
     exec_args: ExecutionArgs,
@@ -261,9 +265,10 @@ impl Output {
     /// - A build environment setup file (`build_env.sh`/`build_env.bat`)
     /// - The main build script file (`conda_build.sh`/`conda_build.bat`)
     ///
-    /// For `build.steps`, the main build script replays the steps the way the
-    /// build runs them, and every step gets its own wrapper in
-    /// `conda_build_steps/step_<index>/`.
+    /// For `build.steps`, the main build script replays the steps one at a
+    /// time in an order the step graph allows, and every step gets its own
+    /// wrapper in `conda_build_steps/step_<index>/`. An invalid step graph is
+    /// reported before any file is written.
     ///
     /// # Errors
     ///

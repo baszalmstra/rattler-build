@@ -17,7 +17,10 @@ mod tests;
 mod types;
 
 pub use about::{About, License};
-pub use build::{BinaryRelocation, Build, BuildPlan, PythonBuild, RunStep, Step};
+pub use build::{
+    BinaryRelocation, Build, BuildPlan, PythonBuild, RunStep, Step, StepInputDeclaration,
+    StepOutputDeclaration,
+};
 pub use extra::Extra;
 pub use match_spec::SerializableMatchSpec;
 pub use output::{

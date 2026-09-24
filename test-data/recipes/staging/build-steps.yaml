@@ -9,18 +9,64 @@ outputs:
       name: staging-build-steps-cache
     build:
       steps:
+        # `one` and `two` declare independent work-root outputs, so they may
+        # run concurrently. `combine` consumes both and runs after they succeed.
         - if: unix
-          run: echo "one" > "$PREFIX/staging-steps.txt"
+          id: one
+          inputs: []
+          outputs:
+            - root: work
+              path: one.txt
+          run: echo "one" > "$SRC_DIR/one.txt"
         - if: unix
-          run: echo "${{ MARKER }}" >> "$PREFIX/staging-steps.txt"
+          id: two
+          inputs: []
+          outputs:
+            - root: work
+              path: two.txt
+          run: echo "${{ MARKER }}" > "$SRC_DIR/two.txt"
+          env:
+            MARKER: two
+        - if: unix
+          id: combine
+          inputs:
+            - root: work
+              path: one.txt
+            - root: work
+              path: two.txt
+          outputs:
+            - root: host
+              path: staging-steps.txt
+          run: cat "$SRC_DIR/one.txt" "$SRC_DIR/two.txt" > "$PREFIX/staging-steps.txt"
+        - if: win
+          id: one
+          inputs: []
+          outputs:
+            - root: work
+              path: one.txt
+          run: echo one> "%SRC_DIR%\one.txt"
+        - if: win
+          id: two
+          inputs: []
+          outputs:
+            - root: work
+              path: two.txt
+          run: echo ${{ MARKER }}> "%SRC_DIR%\two.txt"
           env:
             MARKER: two
         - if: win
-          run: echo one> "%PREFIX%\staging-steps.txt"
-        - if: win
-          run: echo ${{ MARKER }}>> "%PREFIX%\staging-steps.txt"
-          env:
-            MARKER: two
+          id: combine
+          inputs:
+            - root: work
+              path: one.txt
+            - root: work
+              path: two.txt
+          outputs:
+            - root: host
+              path: staging-steps.txt
+          run:
+            - type "%SRC_DIR%\one.txt" > "%PREFIX%\staging-steps.txt"
+            - type "%SRC_DIR%\two.txt" >> "%PREFIX%\staging-steps.txt"
 
   - package:
       name: staging-build-steps-a

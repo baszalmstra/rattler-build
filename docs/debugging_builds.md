@@ -231,12 +231,23 @@ above work as for `build.script`, with these differences:
 - `conda_build.sh` / `conda_build.bat` replays the whole build: it activates
   the environment once and then runs every step in its own process, like
   Rattler-Build does. `rattler-build debug run` therefore reruns all steps.
+- The replay is serial. It runs one step at a time in a fixed order that
+  respects the [step graph](reference/recipe_file.md#step-graph): every step
+  runs after the steps it depends on, and undeclared steps stay barriers.
+  Steps that ran in parallel during the build run one after another in the
+  replay, so their output is not interleaved, and the order is the same on
+  every replay. The replay stops at the first failing step. Unlike the build,
+  it does not check that declared inputs and outputs exist.
 - A failing step names its own script,
   `conda_build_steps/step_<index>/conda_build.sh` (or `.bat`), which runs
   only that step. It does not activate the environment, so run it with `bash`
   (or `cmd.exe /d /c`) from a shell in which the build environment is already
   active, such as `rattler-build debug shell` or one that has sourced
-  `build_env.sh` (or called `build_env.bat`).
+  `build_env.sh` (or called `build_env.bat`). `<index>` numbers steps in
+  recipe order, which can differ from the replay order.
+
+With `build.script`, `conda_build.sh` / `conda_build.bat` is still the single
+build script, and `rattler-build debug run` runs it as before.
 
 ## Environment Variables Available in the Debug Shell
 

@@ -26,7 +26,7 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use rattler_build_script::ScriptContent;
+use rattler_build_script::{ScriptContent, StepInput, StepOutput};
 use rattler_build_types::NormalizedKey;
 use rattler_conda_types::{
     MatchSpec, NoArchType, PackageName, PackageNameMatcher, ParseStrictness, RepodataRevision,
@@ -1427,18 +1427,66 @@ pub fn evaluate_steps(
                     .map(|cwd| evaluate_string_value(cwd, context).map(PathBuf::from))
                     .transpose()?;
 
-                scripts.push(Stage1Step::new(rattler_build_script::Script {
-                    interpreter,
-                    env: evaluate_env_map("steps.env", &run.env, context)?,
-                    content: ScriptContent::Commands(commands),
-                    cwd,
-                    ..Default::default()
-                }));
+                let inputs = run
+                    .inputs
+                    .as_ref()
+                    .map(|inputs| {
+                        inputs
+                            .iter()
+                            .map(|input| {
+                                Ok(StepInput {
+                                    root: input.root,
+                                    path: evaluate_step_path(&input.path, context)?,
+                                    kind: input.kind,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, ParseError>>()
+                    })
+                    .transpose()?;
+                let outputs = run
+                    .outputs
+                    .as_ref()
+                    .map(|outputs| {
+                        outputs
+                            .iter()
+                            .map(|output| {
+                                Ok(StepOutput {
+                                    root: output.root,
+                                    path: evaluate_step_path(&output.path, context)?,
+                                    kind: output.kind,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, ParseError>>()
+                    })
+                    .transpose()?;
+
+                scripts.push(Stage1Step {
+                    id: run.id.clone(),
+                    inputs,
+                    outputs,
+                    depends_on: run.depends_on.clone(),
+                    ..Stage1Step::new(rattler_build_script::Script {
+                        interpreter,
+                        env: evaluate_env_map("steps.env", &run.env, context)?,
+                        content: ScriptContent::Commands(commands),
+                        cwd,
+                        ..Default::default()
+                    })
+                });
             }
         }
     }
 
     Ok(scripts)
+}
+
+/// Render a declared step input/output path. Path validation (relative, no
+/// escapes) happens when the step graph is built from the evaluated steps.
+fn evaluate_step_path(
+    path: &Value<String>,
+    context: &EvaluationContext,
+) -> Result<PathBuf, ParseError> {
+    evaluate_string_value(path, context).map(PathBuf::from)
 }
 
 fn evaluate_build_plan(
@@ -6413,6 +6461,77 @@ package:
 
         assert!(scripts.is_empty());
         assert!(ctx.accessed_variables().contains("flavor"));
+    }
+
+    #[test]
+    fn test_evaluate_steps_renders_graph_declarations_after_filtering() {
+        use crate::stage0::build::{StepInputDeclaration, StepOutputDeclaration};
+        use rattler_build_script::{GraphStep, StepInputKind, StepOutputKind, StepRoot};
+
+        let declared = |id: &str, output: &str, condition: Option<&str>| {
+            Stage0Step::Run(Stage0RunStep {
+                run: ConditionalList::new(vec![Item::Value(Value::new_concrete(
+                    format!("build {id}"),
+                    None,
+                ))]),
+                condition: condition.map(step_condition),
+                id: Some(id.to_string()),
+                inputs: Some(vec![StepInputDeclaration {
+                    root: StepRoot::Work,
+                    path: Value::new_concrete("src/*.c".to_string(), None),
+                    kind: StepInputKind::Glob,
+                }]),
+                outputs: Some(vec![StepOutputDeclaration {
+                    root: StepRoot::Host,
+                    path: Value::new_template(
+                        JinjaTemplate::new(output.to_string()).unwrap(),
+                        None,
+                    ),
+                    kind: StepOutputKind::File,
+                }]),
+                ..Default::default()
+            })
+        };
+        let consumer = Stage0Step::Run(Stage0RunStep {
+            run: ConditionalList::new(vec![Item::Value(Value::new_concrete(
+                "echo consume".to_string(),
+                None,
+            ))]),
+            inputs: Some(Vec::new()),
+            outputs: Some(Vec::new()),
+            depends_on: vec!["lib".to_string()],
+            ..Default::default()
+        });
+        let steps = [
+            declared("lib", "lib/${{ win_name }}.dll", Some("win")),
+            declared("lib", "lib/lib${{ name }}.so", Some("unix")),
+            consumer,
+            run_step("echo barrier"),
+        ];
+        let mut ctx = EvaluationContext::new();
+        ctx.insert("win".to_string(), Variable::from(false));
+        ctx.insert("unix".to_string(), Variable::from(true));
+        ctx.insert("name".to_string(), Variable::from("foo"));
+        ctx.insert("win_name".to_string(), Variable::from("foo"));
+
+        let evaluated = evaluate_steps(&steps, &ctx).unwrap();
+
+        assert_eq!(evaluated.len(), 3);
+        assert!(ctx.accessed_variables().contains("win_name"));
+        let graph = evaluated[0].graph_step();
+        assert_eq!(graph.id.as_deref(), Some("lib"));
+        let outputs = graph.outputs.expect("declared outputs");
+        assert_eq!(outputs[0].path, PathBuf::from("lib/libfoo.so"));
+        assert_eq!(outputs[0].root, StepRoot::Host);
+        let inputs = graph.inputs.expect("declared inputs");
+        assert_eq!(inputs[0].kind, StepInputKind::Glob);
+
+        let consumer = evaluated[1].graph_step();
+        assert_eq!(consumer.inputs, Some(Vec::new()));
+        assert_eq!(consumer.outputs, Some(Vec::new()));
+        assert_eq!(consumer.depends_on, vec!["lib".to_string()]);
+
+        assert_eq!(evaluated[2].graph_step(), GraphStep::default());
     }
 
     #[test]
