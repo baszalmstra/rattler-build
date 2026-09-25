@@ -11,22 +11,41 @@
 //! activated wrapper. Independent build steps (`run_steps`) activate once,
 //! capture the exported environment, and run every step in its own wrapper
 //! process started from that environment. The steps are scheduled by their
-//! `StepGraph`: steps that declare their inputs and outputs run as soon as
-//! the steps they depend on have succeeded, possibly in parallel, while steps
-//! that declare neither run as sequential barriers.
+//! `DynamicStepGraph`: steps that declare their inputs and outputs run as
+//! soon as the steps they depend on have succeeded, possibly in parallel,
+//! while steps that declare neither run as sequential barriers.
+//!
+//! A build step can declare further steps after it succeeded, by writing the
+//! declaration files named by its environment (see [`StepManifest`] and
+//! [`InputManifest`]). The graph registers them once their step succeeded,
+//! and schedules them like the listed steps.
 
 pub mod sandbox;
 mod script;
+mod step_manifest;
 mod step_model;
 
 pub use sandbox::{SandboxArguments, SandboxConfiguration};
 pub use script::{
     Script, ScriptContent, determine_interpreter_from_path, platform_script_extensions,
 };
-pub use step_model::{GraphStep, StepInput, StepInputKind, StepOutput, StepOutputKind, StepRoot};
+#[cfg(feature = "execution")]
+pub use step_manifest::{
+    DeclarationFile, DeclarationFileError, DeclarationKind, DeclarationPaths, ManifestError,
+};
+pub use step_manifest::{
+    GeneratedRun, GeneratedStep, INPUT_MANIFEST_VERSION, InputManifest, STEP_INPUTS_ENV,
+    STEP_MANIFEST_ENV, STEP_MANIFEST_VERSION, StepManifest, StepUpdate,
+};
+pub use step_model::{
+    GraphStep, STEP_ID_SEPARATOR, StepInput, StepInputKind, StepOutput, StepOutputKind, StepRoot,
+    is_valid_step_id,
+};
 
 #[cfg(feature = "execution")]
 mod activation;
+#[cfg(feature = "execution")]
+mod dynamic_graph;
 #[cfg(feature = "execution")]
 mod execution;
 #[cfg(feature = "execution")]
@@ -47,6 +66,8 @@ mod steps;
 mod windows_machine;
 
 #[cfg(feature = "execution")]
+pub use dynamic_graph::{DynamicStepGraph, Expansion};
+#[cfg(feature = "execution")]
 pub use execution::{
     BuildScriptSection, EnvironmentIsolation, ExecutionArgs, ResolvedScriptContents,
     create_build_script, run_script,
@@ -59,7 +80,8 @@ pub use interpreter::{InterpreterError, closest_interpreter};
 pub use runtime::RuntimeEnv;
 #[cfg(feature = "execution")]
 pub use step_graph::{
-    PlannedInput, PlannedOutput, StepGraph, StepGraphError, StepPath, StepPathError, StepRef,
+    LateProducer, PlannedInput, PlannedOutput, StepGraph, StepGraphError, StepPath, StepPathError,
+    StepRef,
 };
 #[cfg(feature = "execution")]
 pub use steps::{create_steps_script, run_steps};

@@ -224,7 +224,8 @@ pub struct Step {
     /// Optional working directory for this step, relative to the host prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
-    /// Optional explicit step identity, referenced by `depends_on`.
+    /// Optional explicit step identity, referenced by `depends_on` and
+    /// `discover_after`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Declared inputs; `None` (absent) differs from an explicit empty list.
@@ -241,9 +242,15 @@ pub struct Step {
         deserialize_with = "deserialize_declared"
     )]
     pub outputs: Option<Vec<StepOutput>>,
-    /// Explicit ordering edges to other steps, by `id`.
+    /// Explicit ordering edges to other steps, by `id`. For a step that
+    /// generates dynamic steps, this waits for its whole generated subtree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// Discovery-ready edges to other steps, by `id`: waits until each named
+    /// step has run and its dynamic step declarations are registered, but not
+    /// for the generated steps to complete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discover_after: Vec<String>,
 }
 
 /// Deserialize a present declaration list. A missing field defaults to `None`
@@ -273,6 +280,7 @@ impl Step {
             inputs: None,
             outputs: None,
             depends_on: Vec::new(),
+            discover_after: Vec::new(),
         }
     }
 
@@ -283,6 +291,7 @@ impl Step {
             inputs: self.inputs.clone(),
             outputs: self.outputs.clone(),
             depends_on: self.depends_on.clone(),
+            discover_after: self.discover_after.clone(),
         }
     }
 
@@ -909,6 +918,7 @@ mod tests {
             inputs: Some(Vec::new()),
             outputs: Some(Vec::new()),
             depends_on: vec!["compile".to_string()],
+            discover_after: vec!["compile".to_string()],
             ..Step::new(Script {
                 content: ScriptContent::Commands(vec!["echo empty".to_string()]),
                 ..Default::default()
@@ -939,6 +949,13 @@ mod tests {
         assert!(barrier.inputs.is_none() && barrier.outputs.is_none());
         let crate::stage0::Step::Run(empty) = &steps[1];
         assert_eq!(empty.inputs.as_deref().map(<[_]>::len), Some(0));
+        assert_eq!(empty.discover_after, vec!["compile".to_string()]);
+        assert_eq!(
+            build.plan.steps().expect("steps mode")[1]
+                .graph_step()
+                .discover_after,
+            vec!["compile".to_string()]
+        );
     }
 
     #[test]

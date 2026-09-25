@@ -61,6 +61,51 @@ def test_staging_build_steps(
         assert not (pkg / "two.txt").exists()
 
 
+def test_staging_dynamic_build_steps(
+    rattler_build: RattlerBuild, recipes: Path, tmp_path: Path
+):
+    """Test that a staging step declaring further steps through
+    `RATTLER_BUILD_STEP_MANIFEST` runs its generated steps once, that a
+    `discover_after` consumer reads their outputs, that `depends_on` waits for
+    the whole generated group, and that both inheriting packages contain
+    exactly the prefix outputs, without the work-root intermediates."""
+    rattler_build.build(
+        recipes / "staging/dynamic-build-steps.yaml",
+        tmp_path,
+        extra_args=["--experimental"],
+    )
+
+    pkg1 = get_extracted_package(tmp_path, "staging-dynamic-build-steps-a")
+    pkg2 = get_extracted_package(tmp_path, "staging-dynamic-build-steps-b")
+
+    for pkg in (pkg1, pkg2):
+        # `combine` read the outputs of `plan/sort-alpha` and `plan/sort-beta`.
+        assert (pkg / "dynamic-sorted.txt").read_text().splitlines() == [
+            "apple",
+            "fig",
+            "pear",
+            "cherry",
+            "plum",
+        ]
+        # `count` started only after both generated steps had finished.
+        assert (pkg / "dynamic-count.txt").read_text().strip() == "2"
+
+        # Only the host outputs are packaged: the seeded and sorted work files
+        # and the declaration files stay out of the prefix.
+        paths = json.loads((pkg / "info/paths.json").read_text())
+        assert sorted(p["_path"] for p in paths["paths"]) == [
+            "dynamic-count.txt",
+            "dynamic-plan.txt",
+            "dynamic-sorted.txt",
+        ]
+
+    # `plan` writes a different token on every run, so equal tokens show that
+    # both packages come from one run of the staging steps.
+    assert (pkg2 / "dynamic-plan.txt").read_text() == (
+        pkg1 / "dynamic-plan.txt"
+    ).read_text()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="symlinks not fully supported on Windows")
 def test_staging_symlinks(rattler_build: RattlerBuild, recipes: Path, tmp_path: Path):
     """Test that symlinks are properly cached and restored in staging outputs."""

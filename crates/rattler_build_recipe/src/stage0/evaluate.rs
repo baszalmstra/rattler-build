@@ -1465,6 +1465,7 @@ pub fn evaluate_steps(
                     inputs,
                     outputs,
                     depends_on: run.depends_on.clone(),
+                    discover_after: run.discover_after.clone(),
                     ..Stage1Step::new(rattler_build_script::Script {
                         interpreter,
                         env: evaluate_env_map("steps.env", &run.env, context)?,
@@ -6500,10 +6501,16 @@ package:
             inputs: Some(Vec::new()),
             outputs: Some(Vec::new()),
             depends_on: vec!["lib".to_string()],
+            discover_after: vec!["scan".to_string()],
             ..Default::default()
         });
+        // A scanner selected out on this platform: its discovery reference in
+        // the consumer is kept verbatim so graph validation reports it as an
+        // unknown id before any step runs.
+        let scan = declared("scan", "scan/${{ win_name }}.json", Some("win"));
         let steps = [
             declared("lib", "lib/${{ win_name }}.dll", Some("win")),
+            scan,
             declared("lib", "lib/lib${{ name }}.so", Some("unix")),
             consumer,
             run_step("echo barrier"),
@@ -6530,6 +6537,12 @@ package:
         assert_eq!(consumer.inputs, Some(Vec::new()));
         assert_eq!(consumer.outputs, Some(Vec::new()));
         assert_eq!(consumer.depends_on, vec!["lib".to_string()]);
+        assert_eq!(consumer.discover_after, vec!["scan".to_string()]);
+        assert!(
+            evaluated
+                .iter()
+                .all(|step| step.id.as_deref() != Some("scan"))
+        );
 
         assert_eq!(evaluated[2].graph_step(), GraphStep::default());
     }

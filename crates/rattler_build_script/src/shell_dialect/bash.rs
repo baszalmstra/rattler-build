@@ -61,6 +61,46 @@ set -x
         )
     }
 
+    fn remove_files(&self, paths: &[&Path]) -> String {
+        let shell = self.shell();
+        let quoted = paths
+            .iter()
+            .map(|path| super::quote_arg(&shell, &path.to_string_lossy()))
+            .collect::<Vec<_>>();
+        format!("rm -f -- {} || exit 1\n", quoted.join(" "))
+    }
+
+    /// `cmp -s` compares the files byte by byte, NUL bytes included, which
+    /// a comparison through command substitution would drop. Only paths
+    /// appear on the traced lines, never what the files contain, so the
+    /// tracing state activation left is kept as it is.
+    fn check_step_manifest(
+        &self,
+        manifest: &Path,
+        recorded: Option<&Path>,
+        message: &str,
+    ) -> String {
+        let shell = self.shell();
+        let quote = |path: &Path| super::quote_arg(&shell, &path.to_string_lossy());
+        let manifest = quote(manifest);
+        let condition = match recorded {
+            None => format!("[ -s {manifest} ]"),
+            Some(recorded) => {
+                let recorded = quote(recorded);
+                format!(
+                    "[ ! -f {manifest} ] || [ ! -f {recorded} ] || ! cmp -s {manifest} {recorded}"
+                )
+            }
+        };
+        format!(
+            "if {condition}; then\n    \
+             printf '%s\\n' {} >&2\n    \
+             exit 1\n\
+             fi\n",
+            super::quote_arg(&shell, message)
+        )
+    }
+
     fn replacements_template(&self) -> &'static str {
         "$((var))"
     }
@@ -72,6 +112,7 @@ set -x
         &self,
         label: Option<&str>,
         env: &IndexMap<String, String>,
+        literal_env: &[(&str, &str)],
         cwd: Option<&Path>,
         body: &str,
     ) -> Result<String, std::io::Error> {
@@ -87,6 +128,9 @@ set -x
                 .set_env_var(&mut out, key, value)
                 .map_err(std::io::Error::other)?;
         }
+        for (name, value) in literal_env {
+            self.set_literal_env_var(&mut out, name, value)?;
+        }
         if let Some(cwd) = cwd {
             let cwd = super::quote_arg(&self.shell(), &cwd.to_string_lossy());
             let _ = writeln!(out, "cd {cwd}");
@@ -97,6 +141,26 @@ set -x
         }
         out.push(')');
         Ok(out)
+    }
+
+    /// `value` is single-quoted (see [`super::quote_arg`]) unless it has only
+    /// characters bash never interprets: single quotes keep every character
+    /// literal, and a single quote in `value` is written as `'\''`.
+    /// [`Shell::set_env_var`] instead double-quotes a value containing `$`,
+    /// in which `$`, command substitutions, and backticks are expanded.
+    fn set_literal_env_var(
+        &self,
+        out: &mut String,
+        name: &str,
+        value: &str,
+    ) -> Result<(), std::io::Error> {
+        super::validate_env_assignment(name, value)?;
+        let _ = writeln!(
+            out,
+            "export {name}={}",
+            super::quote_arg(&self.shell(), value)
+        );
+        Ok(())
     }
 
     /// Returns reproduction instructions for the failed bash wrapper script.

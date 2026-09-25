@@ -1,0 +1,330 @@
+package:
+  name: dynamic_steps_test
+  version: "1.0.0"
+
+build:
+  number: 0
+  # Builds a small Fortran-style program the way CMake's Ninja generator
+  # does, with dynamic `build.steps` instead of Ninja. Fortran modules make
+  # the compile order depend on the sources: compiling `shapes.f90` reads
+  # `mod/geometry.mod`, which compiling `geometry.f90` writes. No compiler is
+  # involved: `tools/fortran.py` follows those module rules and writes JSON
+  # objects instead of machine code.
+  #
+  #   configure                   declares, per source, scan-<name> and
+  #   |                           compile-<name>, plus collate and link
+  #   +- configure/scan-<name>    records the modules a source provides/uses
+  #   +- configure/collate        adds the .mod files to the compile steps
+  #   |  |                        (updates) and declares install-modules
+  #   |  +- configure/collate/install-modules
+  #   +- configure/compile-<name> waits for collate (discover_after)
+  #   +- configure/link
+  steps:
+    # Barrier: writes the sources and the toolchain every other step runs.
+    - interpreter: python
+      run: |
+        import os
+
+        files = {
+            "src/geometry.f90": '''module geometry
+          implicit none
+          real, parameter :: pi = 3.14159265
+        contains
+          pure function circle_area(radius) result(area)
+            real, intent(in) :: radius
+            real :: area
+            area = pi * radius**2
+          end function circle_area
+        end module geometry
+        ''',
+            "src/shapes.f90": '''module shapes
+          use geometry
+          implicit none
+        contains
+          pure function ring_area(outer, inner) result(area)
+            real, intent(in) :: outer, inner
+            real :: area
+            area = circle_area(outer) - circle_area(inner)
+          end function ring_area
+        end module shapes
+        ''',
+            "src/main.f90": '''program main
+          use shapes
+          implicit none
+          print '(f8.3)', ring_area(2.0, 1.0)
+        end program main
+        ''',
+            "tools/fortran.py": r'''"""A stand-in for a Fortran toolchain driven by a CMake-style Ninja
+        generator: the module rules of Fortran compilers, without a compiler."""
+
+        import hashlib
+        import json
+        import os
+        import re
+        import shutil
+        import sys
+
+        MODULE = re.compile(r"^[ \t]*module[ \t]+(\w+)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+        USE = re.compile(r"^[ \t]*use[ \t]+(\w+)", re.IGNORECASE | re.MULTILINE)
+        PROCEDURE = re.compile(
+            r"^[ \t]*(?:pure[ \t]+)?(?:function|subroutine)[ \t].*$", re.IGNORECASE | re.MULTILINE
+        )
+        TOOL = {"root": "work", "path": "tools/fortran.py"}
+
+
+        def work(path):
+            return {"root": "work", "path": path}
+
+
+        def host(path):
+            return {"root": "host", "path": path}
+
+
+        def read(path):
+            with open(path, encoding="utf-8") as file:
+                return file.read()
+
+
+        def write(path, text):
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as file:
+                file.write(text)
+
+
+        def write_json(path, value):
+            write(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+        def declare(steps, updates=()):
+            """Writes the step manifest of the running build step."""
+            manifest = {"version": 1, "steps": list(steps), "updates": list(updates)}
+            write_json(os.environ["RATTLER_BUILD_STEP_MANIFEST"], manifest)
+
+
+        def report(inputs):
+            """Writes the input report of the running build step."""
+            write_json(os.environ["RATTLER_BUILD_STEP_INPUTS"], {"version": 1, "inputs": inputs})
+
+
+        def modules_of(source):
+            provides = sorted({name.lower() for name in MODULE.findall(source)})
+            requires = sorted({name.lower() for name in USE.findall(source)} - set(provides))
+            return provides, requires
+
+
+        def prefix_path(*components):
+            return os.path.join(os.environ["PREFIX"], "share", "dynamic-steps", *components)
+
+
+        def configure(names):
+            """Declares what CMake's Ninja generator writes for Fortran: a scan
+            and a compile step per source, the collation of the scan results,
+            and the link step. Which modules the sources provide and use is not
+            known yet, so the compile steps wait until collate registered it."""
+            steps = []
+            for name in names:
+                source = work(f"src/{name}.f90")
+                steps.append({
+                    "id": f"scan-{name}",
+                    "run": f"python tools/fortran.py scan {name}",
+                    "inputs": [source, TOOL],
+                    "outputs": [work(f"ddi/{name}.json")],
+                })
+                steps.append({
+                    "id": f"compile-{name}",
+                    "run": f"python tools/fortran.py compile {name}",
+                    "inputs": [source, TOOL],
+                    "outputs": [work(f"obj/{name}.o")],
+                    "discover_after": ["collate"],
+                })
+            steps.append({
+                "id": "collate",
+                "run": "python tools/fortran.py collate " + " ".join(names),
+                "inputs": [work(f"ddi/{name}.json") for name in names] + [TOOL],
+                "outputs": [],
+            })
+            steps.append({
+                "id": "link",
+                "run": "python tools/fortran.py link " + " ".join(names),
+                "inputs": [work(f"obj/{name}.o") for name in names] + [TOOL],
+                "outputs": [host("share/dynamic-steps/program.json")],
+            })
+            declare(steps)
+            report([{"root": "work", "path": "src/*.f90", "kind": "glob"}, TOOL])
+
+
+        def scan(name):
+            """Records the modules a source provides and uses, like the
+            dependency scan of a Fortran compiler."""
+            provides, requires = modules_of(read(f"src/{name}.f90"))
+            write_json(f"ddi/{name}.json", {"provides": provides, "requires": requires})
+            report([work(f"src/{name}.f90")])
+
+
+        def collate(names):
+            """Adds every module's .mod file as an output of the compile step
+            of the source providing it and as an input of the compile steps of
+            the sources using it, and declares the step installing the modules,
+            which only the scan results name."""
+            scans = {name: json.loads(read(f"ddi/{name}.json")) for name in names}
+            providers = {}
+            for name, found in scans.items():
+                for module in found["provides"]:
+                    if module in providers:
+                        sys.exit(f"module {module} is provided by {providers[module]} and {name}")
+                    providers[module] = name
+            updates = []
+            for name, found in scans.items():
+                missing = [module for module in found["requires"] if module not in providers]
+                if missing:
+                    sys.exit(f"src/{name}.f90 uses modules no source provides: {missing}")
+                update = {"step": f"configure/compile-{name}"}
+                if found["provides"]:
+                    update["outputs"] = [work(f"mod/{module}.mod") for module in found["provides"]]
+                if found["requires"]:
+                    update["inputs"] = [work(f"mod/{module}.mod") for module in found["requires"]]
+                if len(update) > 1:
+                    updates.append(update)
+            modules = sorted(providers)
+            install = {
+                "id": "install-modules",
+                "run": "python tools/fortran.py install-modules " + " ".join(modules),
+                "inputs": [work(f"mod/{module}.mod") for module in modules] + [TOOL],
+                "outputs": [host(f"share/dynamic-steps/modules/{module}.mod") for module in modules],
+            }
+            declare([install], updates)
+            report([work(f"ddi/{name}.json") for name in names])
+
+
+        def compile(name):
+            """Reads the .mod file of every module the source uses, which has
+            to be compiled already, and writes the object and the .mod file,
+            with the interface of its procedures, of every module it defines."""
+            source = read(f"src/{name}.f90")
+            provides, requires = modules_of(source)
+            uses = {}
+            for module in requires:
+                path = f"mod/{module}.mod"
+                if not os.path.exists(path):
+                    sys.exit(f"src/{name}.f90 uses {module}, but {path} was not compiled yet")
+                uses[module] = read(path).splitlines()
+            interface = "".join(line.strip() + "\n" for line in PROCEDURE.findall(source))
+            for module in provides:
+                write(f"mod/{module}.mod", interface)
+            write_json(f"obj/{name}.o", {
+                "source": f"src/{name}.f90",
+                "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                "provides": provides,
+                "uses": uses,
+            })
+            report([work(f"src/{name}.f90")] + [work(f"mod/{module}.mod") for module in requires])
+
+
+        def link(names):
+            objects = {name: json.loads(read(f"obj/{name}.o")) for name in names}
+            write_json(prefix_path("program.json"), {"objects": objects})
+
+
+        def install_modules(modules):
+            os.makedirs(prefix_path("modules"), exist_ok=True)
+            for module in modules:
+                shutil.copyfile(f"mod/{module}.mod", prefix_path("modules", f"{module}.mod"))
+
+
+        def scan_report():
+            scans = {}
+            for entry in sorted(os.listdir("ddi")):
+                scans[entry[: -len(".json")]] = json.loads(read(f"ddi/{entry}"))
+            write_json(prefix_path("scan.json"), scans)
+
+
+        def summary():
+            with open(prefix_path("program.json"), encoding="utf-8") as file:
+                program = json.load(file)
+            modules = sorted(os.listdir(prefix_path("modules")))
+            lines = [
+                "objects: " + " ".join(sorted(program["objects"])),
+                "modules: " + " ".join(modules),
+            ]
+            write(prefix_path("summary.txt"), "\n".join(lines) + "\n")
+
+
+        def sources():
+            return sorted(entry[: -len(".f90")] for entry in os.listdir("src") if entry.endswith(".f90"))
+
+
+        COMMANDS = {
+            "configure": lambda args: configure(sources()),
+            "scan": lambda args: scan(args[0]),
+            "collate": collate,
+            "compile": lambda args: compile(args[0]),
+            "link": link,
+            "install-modules": install_modules,
+            "scan-report": lambda args: scan_report(),
+            "summary": lambda args: summary(),
+        }
+
+        if __name__ == "__main__":
+            COMMANDS[sys.argv[1]](sys.argv[2:])
+        ''',
+        }
+        for path, text in files.items():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as file:
+                file.write(text)
+
+    # Declares the rest of the build (see above).
+    - id: configure
+      inputs:
+        - root: work
+          path: src/*.f90
+          kind: glob
+        - root: work
+          path: tools/fortran.py
+      outputs: []
+      run: python tools/fortran.py configure
+
+    # Reads what the generated scan steps write. `discover_after` holds it
+    # back until `configure` registered them as the producers of `ddi/*.json`;
+    # without it the glob would match nothing yet and the step would start
+    # right away.
+    - id: scan-report
+      discover_after: [configure]
+      inputs:
+        - root: work
+          path: ddi/*.json
+          kind: glob
+        - root: work
+          path: tools/fortran.py
+      outputs:
+        - root: host
+          path: share/dynamic-steps/scan.json
+      run: python tools/fortran.py scan-report
+
+    # `depends_on: [configure]` waits for everything `configure` generated,
+    # recursively: the link step and the module installation `collate`
+    # declared.
+    - id: summary
+      depends_on: [configure]
+      inputs:
+        - root: host
+          path: share/dynamic-steps/program.json
+        - root: host
+          path: share/dynamic-steps/modules/*.mod
+          kind: glob
+        - root: work
+          path: tools/fortran.py
+      outputs:
+        - root: host
+          path: share/dynamic-steps/summary.txt
+      run: python tools/fortran.py summary
+
+requirements:
+  build:
+    - python >=3.8
+
+about:
+  summary: Dynamic build steps with recursive expansion, discovery and dependency updates
+  license: BSD-3-Clause

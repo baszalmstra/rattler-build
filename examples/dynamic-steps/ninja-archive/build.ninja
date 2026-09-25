@@ -1,0 +1,60 @@
+# Unpacks a tar archive and processes its files, with Ninja dynamic
+# dependencies ("dyndep", Ninja 1.10 and later). This extends the "Tarball
+# Extraction" example of the Ninja manual with edges that read the unpacked
+# files. Nothing here lists the files in the archive: the scanner edge writes
+# them to $dd, as implicit outputs of the extraction edge and implicit inputs
+# of its consumers, and Ninja loads $dd before any edge bound to it runs.
+#
+# rattler-build does not run Ninja. Its `scan` step (recipe.yaml) runs
+# `archive_steps.py export`, which runs the scanner edge, loads $dd and
+# declares every other edge as a generated build step. See README.md.
+
+ninja_required_version = 1.10
+
+builddir = out
+python = python
+# The archive to unpack. `archive_steps.py export --set archive=...` overrides it.
+archive = sample.tar
+
+dd = $builddir/archive.dd
+stamp = $builddir/archive.stamp
+extract_dir = $builddir/extract
+
+rule scantar
+  command = $python archive_steps.py scan $in $out --stamp $stamp --dest $extract_dir --consumers $consumers
+  description = SCAN $in
+
+rule untar
+  command = $python archive_steps.py extract $in $out --dest $extract_dir
+  description = UNTAR $in
+
+rule digest
+  command = $python archive_steps.py digest $in $out
+  description = SHA256 $out
+
+rule stats
+  command = $python archive_steps.py stats $in $out
+  description = STATS $out
+
+rule summarize
+  command = $python archive_steps.py summarize $in $out
+  description = SUMMARY $out
+
+# The scanner reads the member list of the archive and writes $dd.
+build $dd: scantar $archive | archive_steps.py
+  consumers = $builddir/SHA256SUMS $builddir/stats.json
+
+# $dd adds every archive member as an implicit output.
+build $stamp: untar $archive | archive_steps.py || $dd
+  dyndep = $dd
+
+# $dd adds every archive member as an implicit input.
+build $builddir/SHA256SUMS: digest $stamp | archive_steps.py || $dd
+  dyndep = $dd
+build $builddir/stats.json: stats $stamp | archive_steps.py || $dd
+  dyndep = $dd
+
+# An ordinary edge after the dynamic ones.
+build $builddir/summary.txt: summarize $builddir/SHA256SUMS $builddir/stats.json | archive_steps.py
+
+default $builddir/summary.txt

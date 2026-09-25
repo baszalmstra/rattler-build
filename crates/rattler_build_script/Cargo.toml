@@ -26,6 +26,7 @@ execution = [
   "minijinja",
   "strsim",
   "tempfile",
+  "serde_json",
 ]
 
 [dependencies]
@@ -57,6 +58,7 @@ which = { workspace = true, optional = true }
 minijinja = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [

@@ -64,7 +64,8 @@ pub struct RunStep {
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub env: indexmap::IndexMap<String, Value<String>>,
 
-    /// Optional explicit step identity, referenced by `depends_on`.
+    /// Optional explicit step identity, referenced by `depends_on` and
+    /// `discover_after`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
@@ -78,9 +79,16 @@ pub struct RunStep {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outputs: Option<Vec<StepOutputDeclaration>>,
 
-    /// Explicit ordering edges to other steps, by `id`.
+    /// Explicit ordering edges to other steps, by `id`. For a step that
+    /// generates dynamic steps, this waits for its whole generated subtree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+
+    /// Discovery-ready edges to other steps, by `id`: this step waits until
+    /// each referenced step has run and its dynamic step declarations are
+    /// registered, but not for the steps it generated to complete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discover_after: Vec<String>,
 }
 
 /// A declared step input before evaluation. The path may be templated.
@@ -132,6 +140,7 @@ impl RunStep {
             inputs,
             outputs,
             depends_on: _,
+            discover_after: _,
         } = self;
 
         let mut vars = run.used_variables();

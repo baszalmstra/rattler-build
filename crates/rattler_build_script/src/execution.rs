@@ -4,9 +4,9 @@
 //! [`generate_build_script`], executes them with [`run_script`], and provides
 //! subprocess output handling via [`run_process_with_replacements`].
 
-use crate::GraphStep;
 use crate::sandbox::SandboxConfiguration;
 use crate::script::{Script, ScriptContent};
+use crate::{DeclarationPaths, GraphStep};
 use crate::{
     execution_context::ExecutionContext, runner::resolve_process_env, runtime::RuntimeEnv,
 };
@@ -662,6 +662,7 @@ pub(crate) async fn generate_build_script(
         Some(&activation_script_path),
         &args.sections,
         None,
+        None,
     )
     .await
 }
@@ -696,8 +697,11 @@ pub(crate) async fn write_activation_script(
 /// `bash` on Unix), are appended directly to the wrapper; sections with a
 /// specialized interpreter are written to script files in `artifact_dir` and
 /// invoked via the resolved interpreter. With a `base_dir`, every section
-/// changes into its `cwd` resolved against `base_dir`, or into `base_dir`
-/// itself when it has none.
+/// itself when it has none. With `declarations`, the scope of every section
+/// also sets the variables naming those declaration files, after the
+/// section's own `env` and with the paths taken literally, so they name the
+/// files of this wrapper whatever the section or its environment set, and
+/// whatever characters the paths contain.
 pub(crate) async fn write_wrapper_script(
     args: &ExecutionArgs,
     dialect: &dyn crate::shell_dialect::ShellDialect,
@@ -705,9 +709,16 @@ pub(crate) async fn write_wrapper_script(
     activation_script_path: Option<&Path>,
     sections: &[BuildScriptSection],
     base_dir: Option<&Path>,
+    declarations: Option<&DeclarationPaths>,
 ) -> Result<PathBuf, crate::InterpreterError> {
     let shell = dialect.shell();
     let build_script_path = artifact_dir.join(format!("conda_build.{}", shell.extension()));
+
+    let declaration_vars = declarations.map(declaration_env).transpose()?;
+    let literal_env: &[(&str, &str)] = match &declaration_vars {
+        Some(vars) => vars,
+        None => &[],
+    };
 
     let total = sections.len();
     let mut fragments = Vec::with_capacity(total);
@@ -716,10 +727,11 @@ pub(crate) async fn write_wrapper_script(
             Some(cwd) => base_dir.join(cwd),
             None => base_dir.to_path_buf(),
         });
+        let env = without_literal_env(&section.env, literal_env);
         let section = ScriptSection {
             interpreter: section.interpreter.as_deref(),
             content: &section.content,
-            env: &section.env,
+            env: &env,
             cwd: resolved_cwd.as_deref().or(section.cwd.as_deref()),
             label: section.label.as_deref(),
         };
@@ -737,7 +749,13 @@ pub(crate) async fn write_wrapper_script(
         if body.trim().is_empty() {
             continue;
         }
-        fragments.push(dialect.scope_section(section.label, section.env, section.cwd, &body)?);
+        fragments.push(dialect.scope_section(
+            section.label,
+            section.env,
+            literal_env,
+            section.cwd,
+            &body,
+        )?);
     }
 
     write_native_wrapper(
@@ -748,6 +766,46 @@ pub(crate) async fn write_wrapper_script(
     )
     .await?;
     Ok(build_script_path)
+}
+
+/// Returns the variables naming `declarations`, with the paths as strings.
+fn declaration_env(declarations: &DeclarationPaths) -> io::Result<[(&'static str, &str); 2]> {
+    let [manifest, inputs] = declarations.env().map(|(name, path)| {
+        path.to_str().map(|value| (name, value)).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "the declaration file {} of a build step is not a valid Unicode path",
+                    path.display()
+                ),
+            )
+        })
+    });
+    Ok([manifest?, inputs?])
+}
+
+/// Returns `env` without the variables that have the name of one of
+/// `literal_env`, in any case, as the process environment compares names
+/// case-insensitively on Windows. `literal_env` is set after `env` and
+/// takes precedence.
+fn without_literal_env<'a>(
+    env: &'a IndexMap<String, String>,
+    literal_env: &[(&str, &str)],
+) -> Cow<'a, IndexMap<String, String>> {
+    let is_literal = |name: &str| {
+        literal_env
+            .iter()
+            .any(|(literal, _)| literal.eq_ignore_ascii_case(name))
+    };
+    if !env.keys().any(|name| is_literal(name.as_str())) {
+        return Cow::Borrowed(env);
+    }
+    Cow::Owned(
+        env.iter()
+            .filter(|(name, _)| !is_literal(name.as_str()))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
+    )
 }
 
 /// Writes a native wrapper script to `path`: `preamble` (see
