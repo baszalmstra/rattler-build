@@ -96,17 +96,54 @@ pub(crate) trait ShellDialect: Send + Sync {
     /// (such as `set -e`) activation left in effect.
     fn child_script_command(&self, script_path: &Path, context: &ExecutionContext) -> String;
 
+    /// Returns wrapper lines removing the files at `paths` that exist. When
+    /// a file cannot be removed, the wrapper exits with status 1, whatever
+    /// shell error options activation left in effect.
+    fn remove_files(&self, paths: &[&Path]) -> String;
+
+    /// Returns wrapper lines checking the step manifest at `manifest` that a
+    /// replayed step has just written. With `recorded`, the manifest must
+    /// exist with exactly the bytes of the file at `recorded`; without, it
+    /// must be missing or empty. Otherwise the wrapper writes `message` to
+    /// stderr and exits with status 1, whatever shell error options
+    /// activation left in effect.
+    fn check_step_manifest(
+        &self,
+        manifest: &Path,
+        recorded: Option<&Path>,
+        message: &str,
+    ) -> String;
+
     /// Wraps a non-empty section body in an isolated shell scope so its
     /// step-local `env` and shell state don't leak into later sections and a
     /// failure aborts the wrapper. `env` is emitted via [`Shell::set_env_var`]
-    /// for consistent quoting; the scope primitive is shell-specific.
+    /// for consistent quoting, so its values keep the variable references
+    /// the shell expands. `literal_env` is emitted after it via
+    /// [`Self::set_literal_env_var`], so its variables take precedence and
+    /// hold their values exactly as given. The scope primitive is
+    /// shell-specific.
     fn scope_section(
         &self,
         label: Option<&str>,
         env: &IndexMap<String, String>,
+        literal_env: &[(&str, &str)],
         cwd: Option<&Path>,
         body: &str,
     ) -> Result<String, std::io::Error>;
+
+    /// Appends to `out` the wrapper line setting the variable `name` to
+    /// `value` exactly as given. Unlike [`Shell::set_env_var`], the shell
+    /// expands and interprets nothing in `value`, so it may be any path,
+    /// whatever characters the shell would otherwise read as variable
+    /// references, command substitutions, or operators. Fails when `name`
+    /// is not a valid variable name or `value` cannot be written on a line
+    /// of this shell.
+    fn set_literal_env_var(
+        &self,
+        out: &mut String,
+        name: &str,
+        value: &str,
+    ) -> Result<(), std::io::Error>;
 
     /// Returns human-readable reproduction instructions shown when execution fails.
     fn debug_info(&self, work_dir: &Path, context: &ExecutionContext) -> String;
@@ -213,7 +250,7 @@ mod tests {
         let mut env = IndexMap::new();
         env.insert("FOO".to_string(), "a b".to_string());
         let out = dialect
-            .scope_section(Some("uses: configure"), &env, None, "echo hi")
+            .scope_section(Some("uses: configure"), &env, &[], None, "echo hi")
             .unwrap();
         insta::assert_snapshot!(out, @r###"
 # === uses: configure ===
@@ -229,7 +266,7 @@ echo hi
     fn bash_scope_section_minimal() {
         let dialect = shell_dialect(Platform::Linux64);
         let out = dialect
-            .scope_section(None, &IndexMap::new(), None, "echo hi")
+            .scope_section(None, &IndexMap::new(), &[], None, "echo hi")
             .unwrap();
         insta::assert_snapshot!(out, @r###"
 (
@@ -246,7 +283,7 @@ echo hi
         let mut env = IndexMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         let out = dialect
-            .scope_section(Some("step 1"), &env, None, "echo hi")
+            .scope_section(Some("step 1"), &env, &[], None, "echo hi")
             .unwrap();
         insta::assert_snapshot!(out, @r###"
 @rem === step 1 ===
@@ -268,6 +305,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             .scope_section(
                 Some("step 1"),
                 &IndexMap::new(),
+                &[],
                 Some(std::path::Path::new(r"C:\some&dir")),
                 "echo hi",
             )
@@ -292,7 +330,7 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
         env.insert("BAD-NAME".to_string(), "value".to_string());
 
         let err = dialect
-            .scope_section(None, &env, None, "echo hi")
+            .scope_section(None, &env, &[], None, "echo hi")
             .expect_err("invalid env name should fail");
 
         assert!(
@@ -308,10 +346,102 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
         env.insert("FOO".to_string(), "safe\necho injected".to_string());
 
         let err = dialect
-            .scope_section(None, &env, None, "echo hi")
+            .scope_section(None, &env, &[], None, "echo hi")
             .expect_err("newline env value should fail");
 
         assert!(err.to_string().contains("contains a newline"));
+    }
+
+    /// In the native shell of this machine, a literal variable of a section
+    /// holds exactly the given value, whatever characters the shell would
+    /// otherwise expand or interpret, and takes precedence over a section
+    /// variable of the same name, while section variables still expand the
+    /// references in their values. On Windows this holds with delayed
+    /// expansion disabled and enabled.
+    #[test]
+    fn scope_section_sets_literal_env_verbatim() {
+        let dialect = shell_dialect(Platform::current());
+        let shell = dialect.shell();
+        let dir = tempfile::tempdir().unwrap();
+        let literal = "C:\\a b\\pct %OS% x\\bang!OS!y\\amp&c^d|e<f>(g)'q'~$HOME`echo pwned`$(echo x)\\steps.json";
+        let reference = if cfg!(windows) {
+            "%RB_TEST_BASE%-x"
+        } else {
+            "$RB_TEST_BASE-x"
+        };
+        let mut env = IndexMap::new();
+        env.insert("RB_TEST_BASE".to_string(), "base".to_string());
+        env.insert("RB_TEST_USER".to_string(), reference.to_string());
+        env.insert("RB_TEST_LITERAL".to_string(), "from env".to_string());
+
+        let literal_out = dir.path().join("literal.txt");
+        let user_out = dir.path().join("user.txt");
+        let quote = |path: &std::path::Path| quote_arg(&shell, &path.to_string_lossy());
+        let body = if cfg!(windows) {
+            format!(
+                "@set RB_TEST_LITERAL> {}\n@set RB_TEST_USER> {}\n",
+                quote(&literal_out),
+                quote(&user_out)
+            )
+        } else {
+            format!(
+                "printf 'RB_TEST_LITERAL=%s\\n' \"$RB_TEST_LITERAL\" > {}\n\
+                 printf 'RB_TEST_USER=%s\\n' \"$RB_TEST_USER\" > {}\n",
+                quote(&literal_out),
+                quote(&user_out)
+            )
+        };
+        let script = dialect
+            .scope_section(None, &env, &[("RB_TEST_LITERAL", literal)], None, &body)
+            .unwrap();
+        let path = dir.path().join(format!("literal.{}", shell.extension()));
+        fs_err::write(
+            &path,
+            super::write_shell_script(shell.clone(), &format!("{script}\n")).unwrap(),
+        )
+        .unwrap();
+
+        let runs: Vec<std::process::Command> = if cfg!(windows) {
+            ["/v:off", "/v:on"]
+                .into_iter()
+                .map(|expansion| {
+                    let mut command = std::process::Command::new("cmd.exe");
+                    command.args(["/d", expansion, "/c"]).arg(&path);
+                    command
+                })
+                .collect()
+        } else {
+            let mut command = std::process::Command::new("bash");
+            command.arg(&path);
+            vec![command]
+        };
+        for mut command in runs {
+            let output = command.output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{command:?}: {stderr}");
+            let read = |path: &std::path::Path| {
+                fs_err::read_to_string(path).unwrap().trim_end().to_string()
+            };
+            assert_eq!(
+                read(&literal_out),
+                format!("RB_TEST_LITERAL={literal}"),
+                "{command:?}"
+            );
+            assert_eq!(read(&user_out), "RB_TEST_USER=base-x", "{command:?}");
+        }
+    }
+
+    /// A double quote would end the quoted cmd assignment and let the rest
+    /// of the value run as commands, so a literal value with one is
+    /// rejected rather than written.
+    #[test]
+    fn cmd_literal_env_rejects_double_quotes() {
+        let mut out = String::new();
+        let err = shell_dialect(Platform::Win64)
+            .set_literal_env_var(&mut out, "P", "a\" & echo injected & \"b")
+            .expect_err("a double quote cannot be set literally in cmd");
+        assert!(err.to_string().contains("double quote"), "{err}");
+        assert!(out.is_empty(), "{out}");
     }
 
     #[test]
@@ -473,5 +603,91 @@ endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%
             quote_arg(&cmd, r"C:\tmp\%NO_SUCH_VAR% dir\script.bat"),
             r#""C:\tmp\%%NO_SUCH_VAR%% dir\script.bat""#
         );
+    }
+
+    /// The replay guards run in the native shell of this machine: a step
+    /// manifest has to match its recorded copy byte for byte, a trailing
+    /// newline and NUL bytes included, or be missing or empty when none was
+    /// recorded.
+    /// Otherwise the script stops with status 1 and prints the message as
+    /// written, even with characters the shell would otherwise interpret,
+    /// and paths with such characters are compared all the same. Removing
+    /// declaration files succeeds whether or not they exist.
+    #[test]
+    fn replay_guards_compare_manifests_byte_for_byte() {
+        let dialect = shell_dialect(Platform::current());
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("steps (x86) & 100%.json");
+        let inputs = dir.path().join("inputs.json");
+        let recorded = dir.path().join("recorded (x86) & 100%.json");
+        let message = "Build step `g` (x86) & 100% <changed> declared different steps";
+        let recorded_bytes = b"{\"version\": 1}\n";
+        fs_err::write(&recorded, recorded_bytes).unwrap();
+
+        let run = |recorded: Option<&std::path::Path>, written: Option<&[u8]>| {
+            match written {
+                Some(bytes) => fs_err::write(&manifest, bytes).unwrap(),
+                None if manifest.exists() => fs_err::remove_file(&manifest).unwrap(),
+                None => {}
+            }
+            fs_err::write(&inputs, b"{}").unwrap();
+            let script = format!(
+                "{}{}",
+                dialect.remove_files(&[inputs.as_path()]),
+                dialect.check_step_manifest(&manifest, recorded, message)
+            );
+            let path = dir
+                .path()
+                .join(format!("guard.{}", dialect.shell().extension()));
+            fs_err::write(
+                &path,
+                super::write_shell_script(dialect.shell(), &script).unwrap(),
+            )
+            .unwrap();
+            let output = if cfg!(windows) {
+                std::process::Command::new("cmd.exe")
+                    .args(["/d", "/c"])
+                    .arg(&path)
+                    .output()
+            } else {
+                std::process::Command::new("bash").arg(&path).output()
+            }
+            .unwrap();
+            assert!(!inputs.exists(), "the input report was not removed");
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            (output.status.code(), stderr)
+        };
+
+        let recorded = Some(recorded.as_path());
+        let passes = [
+            ("identical manifest", recorded, Some(&recorded_bytes[..])),
+            ("nothing recorded, no manifest", None, None),
+            ("nothing recorded, empty manifest", None, Some(&b""[..])),
+        ];
+        for (case, recorded, written) in passes {
+            let (status, stderr) = run(recorded, written);
+            assert_eq!(status, Some(0), "{case}: {stderr}");
+            assert!(!stderr.contains("declared different"), "{case}: {stderr}");
+        }
+
+        let stops = [
+            (
+                "trailing newline missing",
+                recorded,
+                Some(&b"{\"version\": 1}"[..]),
+            ),
+            (
+                "NUL byte inserted",
+                recorded,
+                Some(&b"{\"version\": 1}\0\n"[..]),
+            ),
+            ("manifest missing", recorded, None),
+            ("nothing recorded, manifest written", None, Some(&b"{}"[..])),
+        ];
+        for (case, recorded, written) in stops {
+            let (status, stderr) = run(recorded, written);
+            assert_eq!(status, Some(1), "{case}: {stderr}");
+            assert!(stderr.contains(message), "{case}: {stderr}");
+        }
     }
 }

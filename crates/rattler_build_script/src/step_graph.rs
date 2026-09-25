@@ -1,4 +1,4 @@
-//! Static scheduling graph of build steps.
+//! Scheduling graph of build steps.
 //!
 //! Steps that declare both `inputs` and `outputs` run once everything they
 //! depend on has succeeded, independently of their position in the list:
@@ -10,12 +10,20 @@
 //!   whether or not a file already exists: a stale file from an earlier build
 //!   never stands in for its producer. A step whose inputs cover its own
 //!   outputs depends on itself, which is reported as a cycle.
-//! - A step depends on every step its `depends_on` names. This orders the
-//!   steps without making any file an input.
+//! - A step depends on every step its `depends_on` or `discover_after`
+//!   names. This orders the steps without making any file an input. The two
+//!   differ only for steps that declare further steps while the build runs
+//!   (see `DynamicStepGraph`).
 //!
 //! A step that declares neither `inputs` nor `outputs` is a sequential
 //! barrier. It waits for every step listed before it, and every step listed
 //! after it waits for it, so it never overlaps other steps.
+//!
+//! Step ids are names of ASCII letters, digits, `_`, `-` and `.`. A `/` joins
+//! the id of a step that declares further steps and the id of a step it
+//! declares into a qualified id: `G/A` is step `A` declared by step `G`.
+//! [`StepGraph`] plans the listed steps only, so it rejects a reference to a
+//! qualified id like a reference to any other id no step has.
 //!
 //! Paths are identified by their root and their lexically normalized path
 //! below it. The `work` root is always distinct from the prefixes, and `host`
@@ -41,7 +49,7 @@
 //! belongs to one output.
 
 use std::cmp::Reverse;
-use std::collections::btree_map::Entry;
+use std::collections::btree_map::{Entry, Range};
 use std::collections::hash_map::Entry as HashEntry;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::fmt;
@@ -53,19 +61,28 @@ use rattler_conda_types::Platform;
 use thiserror::Error;
 
 use crate::execution_context::PrefixLayout;
-use crate::step_model::{GraphStep, StepInputKind, StepOutputKind, StepRoot};
+use crate::step_manifest::ManifestError;
+use crate::step_model::{
+    GraphStep, STEP_ID_SEPARATOR, StepInput, StepInputKind, StepOutput, StepOutputKind, StepRoot,
+    is_valid_step_id,
+};
 
-/// A step named in a diagnostic: its position in the step list and its id.
+/// A step named in a diagnostic: its position and its id.
+///
+/// A step declared by another step, whose qualified id contains `/`, is
+/// named by its id alone, as its position only says when it was declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepRef {
-    /// The position of the step in the list of steps, starting at 0.
+    /// The position of the step in the list of steps, starting at 0. Steps
+    /// declared by other steps follow all listed steps, in the order they
+    /// were declared.
     pub index: usize,
-    /// The id of the step, if it has one.
+    /// The id of the step, if it has one; qualified for a declared step.
     pub id: Option<String>,
 }
 
 impl StepRef {
-    fn new(index: usize, step: &GraphStep) -> Self {
+    pub(crate) fn new(index: usize, step: &GraphStep) -> Self {
         Self {
             index,
             id: step.id.clone(),
@@ -76,6 +93,7 @@ impl StepRef {
 impl fmt::Display for StepRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.id {
+            Some(id) if id.contains(STEP_ID_SEPARATOR) => write!(f, "step `{id}`"),
             Some(id) => write!(f, "step {} (`{id}`)", self.index),
             None => write!(f, "step {}", self.index),
         }
@@ -119,7 +137,8 @@ pub enum StepPathError {
     NotUnicode,
 }
 
-/// An invalid set of step declarations.
+/// An invalid set of step declarations, or declarations that do not fit
+/// into the steps already known.
 #[derive(Debug, Error)]
 pub enum StepGraphError {
     /// A step has an empty id.
@@ -127,6 +146,16 @@ pub enum StepGraphError {
     EmptyId {
         /// The step with the empty id.
         step: StepRef,
+    },
+    /// A step id is not a name of the allowed characters.
+    #[error(
+        "{step} has the id `{id}`; a step id is a name of ASCII letters, digits, `_`, `-` and `.`, as `/` joins the ids of a step and the steps it declares"
+    )]
+    InvalidId {
+        /// The step with the invalid id.
+        step: StepRef,
+        /// The id as written.
+        id: String,
     },
     /// Two steps have the same id.
     #[error("step {first} and step {second} both have the id `{id}`; step ids must be unique")]
@@ -178,6 +207,29 @@ pub enum StepGraphError {
         /// The id no step has.
         dependency: String,
     },
+    /// `discover_after` names an id no step has.
+    #[error("{step} names `{dependency}` in `discover_after`, but no step has that id")]
+    UnknownDiscovery {
+        /// The step naming the id.
+        step: StepRef,
+        /// The id no step has.
+        dependency: String,
+    },
+    /// A qualified id names a step that its declaring step did not declare.
+    #[error(
+        "{step} names `{reference}` in `{field}`, but {declarer} declared no step `{}`",
+        undeclared_id(.reference, .declarer)
+    )]
+    UndeclaredReference {
+        /// The step naming the id.
+        step: StepRef,
+        /// The field naming it.
+        field: &'static str,
+        /// The qualified id.
+        reference: String,
+        /// The step whose declarations are registered without the step.
+        declarer: StepRef,
+    },
     /// Two outputs are the same path or lie inside one another.
     #[error(
         "{first_step} writes `{first_path}` and {second_step} writes `{second_path}`; declared outputs must not be the same path or lie inside one another"
@@ -199,11 +251,149 @@ pub enum StepGraphError {
         /// One line per dependency of the cycle, with its reason.
         chain: String,
     },
+    /// A step manifest is invalid on its own.
+    #[error("{producer} declares invalid steps: {error}")]
+    InvalidManifest {
+        /// The step that wrote the manifest.
+        producer: StepRef,
+        /// Why the manifest is invalid.
+        error: ManifestError,
+    },
+    /// An update names an id no step has.
+    #[error("{producer} updates `{target}`, but no step has that id")]
+    UnknownUpdateTarget {
+        /// The step declaring the update.
+        producer: StepRef,
+        /// The id as written.
+        target: String,
+    },
+    /// An update names a step that has already started.
+    #[error(
+        "{producer} updates {target}, which has already started; only a step that waits for {producer}, for example through `discover_after`, can be updated"
+    )]
+    UpdateOfStartedStep {
+        /// The step declaring the update.
+        producer: StepRef,
+        /// The step the update names.
+        target: StepRef,
+    },
+    /// An update names a step that may start before the update is
+    /// registered.
+    #[error(
+        "{producer} updates {target}, which does not wait for it and so could start before the update; make {target} wait for {producer}, for example through `discover_after`"
+    )]
+    UpdateOfUnorderedStep {
+        /// The step declaring the update.
+        producer: StepRef,
+        /// The step the update names.
+        target: StepRef,
+    },
+    /// An update adds inputs or outputs to a sequential barrier.
+    #[error(
+        "{producer} adds inputs or outputs to {target}, which declares neither and runs as a sequential barrier"
+    )]
+    UpdateOfBarrier {
+        /// The step declaring the update.
+        producer: StepRef,
+        /// The step the update names.
+        target: StepRef,
+    },
+    /// Declarations give a producer to an input of a step that has started,
+    /// or may start before the declarations are registered.
+    #[error("{0}")]
+    LateProducer(Box<LateProducer>),
+    /// A step reports reading the output of a step it does not wait for.
+    #[error(
+        "{step} reports reading `{input}`, which covers `{output}` of {writer}, but {step} does not wait for {writer}; declare the input, or make {step} wait for {writer}"
+    )]
+    UndeclaredRead {
+        /// The step reporting the input.
+        step: StepRef,
+        /// The reported input, with its root.
+        input: String,
+        /// The step writing the output.
+        writer: StepRef,
+        /// The output, with its root.
+        output: String,
+    },
+    /// Steps are left that nothing can start.
+    #[error("{count} build step(s) can never start:\n{details}")]
+    Stalled {
+        /// The number of steps left.
+        count: usize,
+        /// One line per step left, with what it waits for.
+        details: String,
+    },
+    /// A step was reported in a state it cannot be in.
+    #[error("{step} {problem}")]
+    InvalidState {
+        /// The step.
+        step: StepRef,
+        /// What is wrong with the request.
+        problem: &'static str,
+    },
+}
+
+/// The id, within the qualified id `reference`, of the step `declarer` was
+/// to declare.
+fn undeclared_id<'r>(reference: &'r str, declarer: &StepRef) -> &'r str {
+    let rest = declarer
+        .id
+        .as_deref()
+        .and_then(|id| reference.strip_prefix(id)?.strip_prefix(STEP_ID_SEPARATOR))
+        .unwrap_or(reference);
+    rest.split_once(STEP_ID_SEPARATOR)
+        .map_or(rest, |(id, _)| id)
+}
+
+/// Declarations that would give an input of a step a producer after the
+/// step may have started: a step `producer` declared writes `output`, which
+/// input `input` of step `reader` covers.
+#[derive(Debug)]
+pub struct LateProducer {
+    /// The step whose input covers the output.
+    pub reader: StepRef,
+    /// Whether the reader has started; otherwise it does not wait for
+    /// `producer`.
+    pub started: bool,
+    /// The input, with its root.
+    pub input: String,
+    /// The step writing the output: a step `producer` declared, or one it
+    /// updated.
+    pub writer: StepRef,
+    /// The output, with its root.
+    pub output: String,
+    /// The step that declared that the writer writes the output.
+    pub producer: StepRef,
+}
+
+impl fmt::Display for LateProducer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            reader,
+            started,
+            input,
+            writer,
+            output,
+            producer,
+        } = self;
+        if *started {
+            write!(
+                f,
+                "{producer} declares that {writer} writes `{output}`, but {reader}, whose input `{input}` covers it, has already started; a step cannot get a producer for its input after it started"
+            )
+        } else {
+            write!(
+                f,
+                "{producer} declares that {writer} writes `{output}`, which {reader} reads through its input `{input}`, but {reader} does not wait for {producer}, so whether {reader} waits for {writer} would depend on the order the steps run in; make {reader} wait for {producer}, for example through `discover_after`"
+            )
+        }
+    }
 }
 
 /// How declared paths are identified on the machine the steps run on.
 #[derive(Debug, Clone, Copy)]
-struct PathIdentity {
+pub(crate) struct PathIdentity {
     /// Whether paths compare case-insensitively: on Windows and macOS, whose
     /// file systems usually are, even where a volume is case-sensitive.
     case_insensitive: bool,
@@ -215,7 +405,7 @@ struct PathIdentity {
 }
 
 impl PathIdentity {
-    fn new(platform: Platform, layout: PrefixLayout) -> Self {
+    pub(crate) fn new(platform: Platform, layout: PrefixLayout) -> Self {
         Self {
             case_insensitive: platform.is_windows() || platform.is_osx(),
             windows: platform.is_windows(),
@@ -343,6 +533,8 @@ impl fmt::Display for StepPath {
 pub struct PlannedInput {
     path: StepPath,
     kind: StepInputKind,
+    /// The compiled pattern of a glob input.
+    pattern: Option<GlobPattern>,
     producers: Vec<usize>,
     source: bool,
 }
@@ -358,7 +550,7 @@ impl PlannedInput {
         self.kind
     }
 
-    /// The steps producing outputs this input covers, in list order.
+    /// The steps producing outputs this input covers, by position.
     pub fn producers(&self) -> &[usize] {
         &self.producers
     }
@@ -368,6 +560,18 @@ impl PlannedInput {
     /// the step starts.
     pub fn is_source(&self) -> bool {
         self.source
+    }
+
+    /// Records that step `step` writes an output this input covers; `owner`
+    /// when that output is the input's path or a tree containing it, so the
+    /// path is no source.
+    pub(crate) fn add_producer(&mut self, step: usize, owner: bool) {
+        if let Err(position) = self.producers.binary_search(&step) {
+            self.producers.insert(position, step);
+        }
+        if owner {
+            self.source = false;
+        }
     }
 }
 
@@ -423,64 +627,32 @@ impl StepGraph {
         platform: Platform,
         layout: PrefixLayout,
     ) -> Result<Self, StepGraphError> {
-        let steps: Vec<&GraphStep> = steps.into_iter().collect();
-        let identity = PathIdentity::new(platform, layout);
-
-        let ids = step_ids(&steps)?;
-        let (mut inputs, outputs): (Vec<StepInputs>, Vec<Vec<PlannedOutput>>) = steps
+        let plan = StaticPlan::new(
+            steps.into_iter().collect(),
+            PathIdentity::new(platform, layout),
+            QualifiedRefs::Reject,
+        )?;
+        let Flattened {
+            dependencies,
+            dependents,
+            order,
+        } = plan.flatten()?;
+        let nodes = plan
+            .steps
             .iter()
-            .enumerate()
-            .map(|(index, step)| declarations(index, step, identity))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .unzip();
-
-        let mut edges: Vec<Vec<Edge>> = vec![Vec::new(); steps.len()];
-        for (index, step) in steps.iter().enumerate() {
-            for dependency in &step.depends_on {
-                let Some(&from) = ids.get(dependency.as_str()) else {
-                    return Err(StepGraphError::UnknownDependency {
-                        step: StepRef::new(index, step),
-                        dependency: dependency.clone(),
-                    });
-                };
-                edges[index].push(Edge {
-                    from,
-                    reason: EdgeReason::DependsOn,
-                });
-            }
-        }
-
-        let owners = OutputOwners::new(&steps, &outputs)?;
-        for (step_inputs, step_edges) in inputs.iter_mut().zip(&mut edges) {
-            step_inputs.resolve(&owners, step_edges);
-        }
-        add_barrier_edges(&steps, &mut edges);
-
-        let mut nodes: Vec<Node> = inputs
-            .into_iter()
-            .zip(outputs)
-            .zip(&steps)
-            .map(|((step_inputs, outputs), step)| Node {
-                barrier: step.is_barrier(),
-                inputs: step_inputs.planned,
-                outputs,
-                dependencies: Vec::new(),
-                dependents: Vec::new(),
-            })
+            .zip(plan.inputs)
+            .zip(plan.outputs)
+            .zip(dependencies.into_iter().zip(dependents))
+            .map(
+                |(((step, inputs), outputs), (dependencies, dependents))| Node {
+                    barrier: step.is_barrier(),
+                    inputs,
+                    outputs,
+                    dependencies,
+                    dependents,
+                },
+            )
             .collect();
-        for (index, step_edges) in edges.iter_mut().enumerate() {
-            // Stable, so the first reason recorded for a dependency is kept.
-            step_edges.sort_by_key(|edge| edge.from);
-            step_edges.dedup_by_key(|edge| edge.from);
-            nodes[index].dependencies = step_edges.iter().map(|edge| edge.from).collect();
-            for edge in step_edges.iter() {
-                nodes[edge.from].dependents.push(index);
-            }
-        }
-
-        let order = topological_order(&nodes)
-            .map_err(|remaining| cycle_error(&steps, &nodes, &edges, &remaining))?;
         Ok(Self { nodes, order })
     }
 
@@ -541,6 +713,236 @@ impl StepGraph {
     }
 }
 
+/// What a plan of the listed steps does with a reference to a qualified id,
+/// which only a declared step can have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QualifiedRefs {
+    /// Rejects it like any other id no listed step has.
+    Reject,
+    /// Keeps it in [`StaticPlan::qualified`], to be resolved once the steps
+    /// that may declare it have run.
+    Defer,
+}
+
+/// A reference of a listed step to a qualified id.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QualifiedRef<'a> {
+    /// The position of the step naming the id.
+    pub(crate) step: usize,
+    /// The field naming it.
+    pub(crate) field: RefField,
+    /// The qualified id.
+    pub(crate) reference: &'a str,
+}
+
+/// The validated declarations of a list of steps and the dependencies they
+/// imply among them.
+#[derive(Debug)]
+pub(crate) struct StaticPlan<'a> {
+    pub(crate) steps: Vec<&'a GraphStep>,
+    /// The position of every step with an id.
+    pub(crate) ids: HashMap<&'a str, usize>,
+    /// The inputs of every step, with their producers among the steps.
+    pub(crate) inputs: Vec<Vec<PlannedInput>>,
+    pub(crate) outputs: Vec<Vec<PlannedOutput>>,
+    /// The outputs of all steps.
+    pub(crate) owners: OutputIndex,
+    /// What every step waits for, by step, deduplicated by step and
+    /// [`Wait`], keeping the first reason.
+    pub(crate) edges: Vec<Vec<Edge>>,
+    /// The references to qualified ids, with [`QualifiedRefs::Defer`].
+    pub(crate) qualified: Vec<QualifiedRef<'a>>,
+}
+
+/// The dependencies of a [`StaticPlan`] flattened to the steps they name,
+/// and an order of the steps.
+pub(crate) struct Flattened {
+    pub(crate) dependencies: Vec<Vec<usize>>,
+    pub(crate) dependents: Vec<Vec<usize>>,
+    pub(crate) order: Vec<usize>,
+}
+
+impl<'a> StaticPlan<'a> {
+    /// Validates the declarations of `steps` and plans the dependencies
+    /// between them, without checking for cycles.
+    pub(crate) fn new(
+        steps: Vec<&'a GraphStep>,
+        identity: PathIdentity,
+        qualified_refs: QualifiedRefs,
+    ) -> Result<Self, StepGraphError> {
+        let ids = step_ids(&steps)?;
+        let mut inputs = Vec::with_capacity(steps.len());
+        let mut outputs = Vec::with_capacity(steps.len());
+        for (index, step) in steps.iter().enumerate() {
+            let step_ref = StepRef::new(index, step);
+            let (declared_inputs, declared_outputs) =
+                declared_lists(&step_ref, step.inputs.as_deref(), step.outputs.as_deref())?;
+            inputs.push(plan_inputs(&step_ref, declared_inputs, identity)?);
+            outputs.push(plan_outputs(&step_ref, declared_outputs, identity)?);
+        }
+
+        let mut edges: Vec<Vec<Edge>> = vec![Vec::new(); steps.len()];
+        let mut qualified = Vec::new();
+        for (index, step) in steps.iter().enumerate() {
+            let fields = [
+                (RefField::DependsOn, &step.depends_on),
+                (RefField::DiscoverAfter, &step.discover_after),
+            ];
+            for (field, references) in fields {
+                for reference in references {
+                    if let Some(&from) = ids.get(reference.as_str()) {
+                        edges[index].push(Edge {
+                            from,
+                            reason: field.reason(),
+                        });
+                    } else if qualified_refs == QualifiedRefs::Defer && is_qualified_id(reference) {
+                        qualified.push(QualifiedRef {
+                            step: index,
+                            field,
+                            reference,
+                        });
+                    } else {
+                        return Err(field.unknown(StepRef::new(index, step), reference.clone()));
+                    }
+                }
+            }
+        }
+
+        let refs: Vec<(OutputRef, &StepPath)> = outputs
+            .iter()
+            .enumerate()
+            .flat_map(|(step, step_outputs)| {
+                step_outputs
+                    .iter()
+                    .enumerate()
+                    .map(move |(output, planned)| {
+                        (OutputRef::new(step, output, planned), &planned.path)
+                    })
+            })
+            .collect();
+        let owners = OutputIndex::default()
+            .stage(&refs)
+            .map_err(|(first, second)| {
+                output_conflict(
+                    first,
+                    second,
+                    |index| StepRef::new(index, steps[index]),
+                    |output| &outputs[output.step][output.output],
+                )
+            })?;
+
+        let mut covered = Vec::new();
+        for (step_inputs, step_edges) in inputs.iter_mut().zip(&mut edges) {
+            for (position, input) in step_inputs.iter_mut().enumerate() {
+                covered.clear();
+                owners.cover(
+                    input,
+                    |output| &outputs[output.step][output.output],
+                    &mut covered,
+                );
+                for &(output, owner) in &covered {
+                    input.add_producer(output.step, owner);
+                    step_edges.push(Edge {
+                        from: output.step,
+                        reason: EdgeReason::Artifact {
+                            input: position,
+                            output: output.output,
+                        },
+                    });
+                }
+            }
+        }
+        add_barrier_edges(steps.iter().map(|step| step.is_barrier()), 0, &mut edges);
+        for step_edges in &mut edges {
+            dedup_edges(step_edges);
+        }
+
+        Ok(Self {
+            steps,
+            ids,
+            inputs,
+            outputs,
+            owners,
+            edges,
+            qualified,
+        })
+    }
+
+    /// Flattens the dependencies to the steps they name and orders the
+    /// steps, or reports a cycle among them.
+    pub(crate) fn flatten(&self) -> Result<Flattened, StepGraphError> {
+        let dependencies: Vec<Vec<usize>> = self
+            .edges
+            .iter()
+            .map(|edges| {
+                let mut from: Vec<usize> = edges.iter().map(|edge| edge.from).collect();
+                from.dedup();
+                from
+            })
+            .collect();
+        let mut dependents = vec![Vec::new(); dependencies.len()];
+        for (index, step_dependencies) in dependencies.iter().enumerate() {
+            for &from in step_dependencies {
+                dependents[from].push(index);
+            }
+        }
+        let order = topological_order(&dependencies, &dependents)
+            .map_err(|remaining| self.cycle_error(&remaining))?;
+        Ok(Flattened {
+            dependencies,
+            dependents,
+            order,
+        })
+    }
+
+    /// Describes a cycle among the `remaining` steps, which could not be
+    /// ordered.
+    fn cycle_error(&self, remaining: &[bool]) -> StepGraphError {
+        // Every remaining step waits for a remaining step, so following those
+        // dependencies from any remaining step runs into a cycle.
+        let unordered_dependency = |index: usize| {
+            self.edges[index]
+                .iter()
+                .find(|edge| remaining[edge.from])
+                .copied()
+        };
+        let mut seen_at = vec![None; self.steps.len()];
+        let mut path: Vec<(usize, Edge)> = Vec::new();
+        let mut current = remaining.iter().position(|&left| left);
+        while let Some(index) = current {
+            if let Some(start) = seen_at[index] {
+                path.drain(..start);
+                break;
+            }
+            let Some(edge) = unordered_dependency(index) else {
+                break;
+            };
+            seen_at[index] = Some(path.len());
+            path.push((index, edge));
+            current = Some(edge.from);
+        }
+
+        let step_ref = |index: usize| StepRef::new(index, self.steps[index]);
+        let chain = path
+            .iter()
+            .map(|&(waiting, edge)| {
+                let reason = edge.reason.describe(
+                    self.steps[waiting].is_barrier(),
+                    |input| self.inputs[waiting][input].path.to_string(),
+                    |output| self.outputs[edge.from][output].path.to_string(),
+                );
+                format!(
+                    "  {} waits for {}: {reason}",
+                    step_ref(waiting),
+                    step_ref(edge.from)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        StepGraphError::Cycle { chain }
+    }
+}
+
 /// Maps the id of every step with an id to its position.
 fn step_ids<'a>(steps: &[&'a GraphStep]) -> Result<HashMap<&'a str, usize>, StepGraphError> {
     let mut ids = HashMap::new();
@@ -548,9 +950,14 @@ fn step_ids<'a>(steps: &[&'a GraphStep]) -> Result<HashMap<&'a str, usize>, Step
         let Some(id) = step.id.as_deref() else {
             continue;
         };
+        let unnamed = StepRef { index, id: None };
         if id.is_empty() {
-            return Err(StepGraphError::EmptyId {
-                step: StepRef { index, id: None },
+            return Err(StepGraphError::EmptyId { step: unnamed });
+        }
+        if !is_valid_step_id(id) {
+            return Err(StepGraphError::InvalidId {
+                step: unnamed,
+                id: id.to_string(),
             });
         }
         match ids.entry(id) {
@@ -569,133 +976,232 @@ fn step_ids<'a>(steps: &[&'a GraphStep]) -> Result<HashMap<&'a str, usize>, Step
     Ok(ids)
 }
 
+/// Whether `reference` is the qualified id of a declared step: valid step
+/// ids joined by [`STEP_ID_SEPARATOR`].
+pub(crate) fn is_qualified_id(reference: &str) -> bool {
+    reference.contains(STEP_ID_SEPARATOR)
+        && reference.split(STEP_ID_SEPARATOR).all(is_valid_step_id)
+}
+
+/// A field of a step that names other steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RefField {
+    /// `depends_on`.
+    DependsOn,
+    /// `discover_after`.
+    DiscoverAfter,
+}
+
+impl RefField {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::DependsOn => "depends_on",
+            Self::DiscoverAfter => "discover_after",
+        }
+    }
+
+    /// The reason of a dependency on a step the field names.
+    pub(crate) fn reason(self) -> EdgeReason {
+        match self {
+            Self::DependsOn => EdgeReason::DependsOn,
+            Self::DiscoverAfter => EdgeReason::DiscoverAfter,
+        }
+    }
+
+    /// The error for `step` naming `reference`, an id no step has, in this
+    /// field.
+    pub(crate) fn unknown(self, step: StepRef, reference: String) -> StepGraphError {
+        match self {
+            Self::DependsOn => StepGraphError::UnknownDependency {
+                step,
+                dependency: reference,
+            },
+            Self::DiscoverAfter => StepGraphError::UnknownDiscovery {
+                step,
+                dependency: reference,
+            },
+        }
+    }
+}
+
+/// How much of a step a step depending on it waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Wait {
+    /// The step succeeded and the steps it declared are registered.
+    Done,
+    /// The step succeeded, and so did every step it declared, recursively.
+    Complete,
+}
+
 /// Why a step has to wait for another one.
-#[derive(Debug, Clone, Copy)]
-enum EdgeReason {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EdgeReason {
     /// The step names the other one in `depends_on`.
     DependsOn,
+    /// The step names the other one in `discover_after`.
+    DiscoverAfter,
     /// One of the two steps is a barrier.
     Barrier,
     /// Input `input` of the step covers output `output` of the other one.
     Artifact { input: usize, output: usize },
 }
 
-/// A dependency of a step on step `from`.
-#[derive(Debug, Clone, Copy)]
-struct Edge {
-    from: usize,
-    reason: EdgeReason,
-}
+impl EdgeReason {
+    /// How much of the other step the step waits for: all it declared for
+    /// `depends_on` and barriers, and only the step and its declarations for
+    /// `discover_after` and the producer of an input.
+    pub(crate) fn wait(self) -> Wait {
+        match self {
+            Self::DependsOn | Self::Barrier => Wait::Complete,
+            Self::DiscoverAfter | Self::Artifact { .. } => Wait::Done,
+        }
+    }
 
-/// The normalized inputs of one step.
-struct StepInputs {
-    planned: Vec<PlannedInput>,
-    /// The compiled pattern of every glob input; `None` for single paths.
-    patterns: Vec<Option<GlobPattern>>,
-}
-
-impl StepInputs {
-    /// Finds the producers of the inputs of a step, records them on the
-    /// inputs and adds a dependency on each of them to `edges`, the
-    /// dependencies of the step.
-    fn resolve(&mut self, owners: &OutputOwners<'_>, edges: &mut Vec<Edge>) {
-        let mut covered = Vec::new();
-        for (position, (input, pattern)) in self.planned.iter_mut().zip(&self.patterns).enumerate()
-        {
-            covered.clear();
-            match pattern {
-                None => {
-                    let owner = owners.owner(&input.path);
-                    input.source = owner.is_none();
-                    covered.extend(owner);
-                    covered.extend(owners.below(&input.path));
-                }
-                Some(pattern) => covered.extend(
-                    owners
-                        .all()
-                        .filter(|owner| pattern.covers(&input.path, owners.output(owner))),
-                ),
+    /// Explains the dependency of a step, a barrier when `waiting_barrier`,
+    /// in a cycle; `input` and `output` name the paths of an artifact
+    /// dependency.
+    pub(crate) fn describe(
+        self,
+        waiting_barrier: bool,
+        input: impl FnOnce(usize) -> String,
+        output: impl FnOnce(usize) -> String,
+    ) -> String {
+        match self {
+            Self::DependsOn => "it is named in `depends_on`".to_string(),
+            Self::DiscoverAfter => "it is named in `discover_after`".to_string(),
+            Self::Barrier if waiting_barrier => {
+                "a step without `inputs` and `outputs` waits for every step listed before it"
+                    .to_string()
             }
-
-            edges.extend(covered.iter().map(|owner| Edge {
-                from: owner.step,
-                reason: EdgeReason::Artifact {
-                    input: position,
-                    output: owner.output,
-                },
-            }));
-            input.producers = covered.iter().map(|owner| owner.step).collect();
-            input.producers.sort_unstable();
-            input.producers.dedup();
+            Self::Barrier => {
+                "every step waits for the last step without `inputs` and `outputs` listed before it"
+                    .to_string()
+            }
+            Self::Artifact {
+                input: input_at,
+                output: output_at,
+            } => format!(
+                "input `{}` needs its output `{}`",
+                input(input_at),
+                output(output_at)
+            ),
         }
     }
 }
 
-/// Normalizes the declarations of step `index`.
-fn declarations(
-    index: usize,
-    step: &GraphStep,
-    identity: PathIdentity,
-) -> Result<(StepInputs, Vec<PlannedOutput>), StepGraphError> {
+/// A dependency of a step on step `from`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Edge {
+    pub(crate) from: usize,
+    pub(crate) reason: EdgeReason,
+}
+
+/// Sorts the dependencies of a step by the step they name and keeps the
+/// first of each step and [`Wait`].
+pub(crate) fn dedup_edges(edges: &mut Vec<Edge>) {
+    // Stable, so the first reason recorded for a dependency is kept.
+    edges.sort_by_key(|edge| edge.from);
+    let mut step = None;
+    let mut seen = [false; 2];
+    edges.retain(|edge| {
+        if step != Some(edge.from) {
+            step = Some(edge.from);
+            seen = [false; 2];
+        }
+        let wait = match edge.reason.wait() {
+            Wait::Done => 0,
+            Wait::Complete => 1,
+        };
+        !std::mem::replace(&mut seen[wait], true)
+    });
+}
+
+/// The inputs and outputs `step` declares: both lists, or neither for a
+/// barrier.
+pub(crate) fn declared_lists<'s>(
+    step: &StepRef,
+    inputs: Option<&'s [StepInput]>,
+    outputs: Option<&'s [StepOutput]>,
+) -> Result<(&'s [StepInput], &'s [StepOutput]), StepGraphError> {
     let partial = |declared, missing| StepGraphError::PartialDeclaration {
-        step: StepRef::new(index, step),
+        step: step.clone(),
         declared,
         missing,
     };
-    let (inputs, outputs) = match (&step.inputs, &step.outputs) {
-        (Some(inputs), Some(outputs)) => (inputs.as_slice(), outputs.as_slice()),
-        (None, None) => (&[][..], &[][..]),
-        (Some(_), None) => return Err(partial("inputs", "outputs")),
-        (None, Some(_)) => return Err(partial("outputs", "inputs")),
-    };
-    let normalize = |root, raw: &Path| {
-        StepPath::new(root, raw, identity).map_err(|reason| StepGraphError::InvalidPath {
-            step: StepRef::new(index, step),
-            path: raw.display().to_string(),
-            reason,
-        })
-    };
-
-    let mut step_inputs = StepInputs {
-        planned: Vec::with_capacity(inputs.len()),
-        patterns: Vec::with_capacity(inputs.len()),
-    };
-    for input in inputs {
-        let path = normalize(input.root, &input.path)?;
-        let pattern = match input.kind {
-            StepInputKind::File => None,
-            StepInputKind::Glob => Some(
-                GlobPattern::new(path.as_str(), identity.case_insensitive).map_err(|reason| {
-                    StepGraphError::InvalidGlob {
-                        step: StepRef::new(index, step),
-                        pattern: path.to_string(),
-                        reason,
-                    }
-                })?,
-            ),
-        };
-        step_inputs.planned.push(PlannedInput {
-            path,
-            kind: input.kind,
-            producers: Vec::new(),
-            source: false,
-        });
-        step_inputs.patterns.push(pattern);
+    match (inputs, outputs) {
+        (Some(inputs), Some(outputs)) => Ok((inputs, outputs)),
+        (None, None) => Ok((&[][..], &[][..])),
+        (Some(_), None) => Err(partial("inputs", "outputs")),
+        (None, Some(_)) => Err(partial("outputs", "inputs")),
     }
-    let planned_outputs = outputs
+}
+
+fn normalize(
+    step: &StepRef,
+    root: StepRoot,
+    raw: &Path,
+    identity: PathIdentity,
+) -> Result<StepPath, StepGraphError> {
+    StepPath::new(root, raw, identity).map_err(|reason| StepGraphError::InvalidPath {
+        step: step.clone(),
+        path: raw.display().to_string(),
+        reason,
+    })
+}
+
+/// Normalizes the inputs `step` declares, compiling its glob patterns. No
+/// input has a producer yet.
+pub(crate) fn plan_inputs(
+    step: &StepRef,
+    inputs: &[StepInput],
+    identity: PathIdentity,
+) -> Result<Vec<PlannedInput>, StepGraphError> {
+    inputs
+        .iter()
+        .map(|input| {
+            let path = normalize(step, input.root, &input.path, identity)?;
+            let pattern = match input.kind {
+                StepInputKind::File => None,
+                StepInputKind::Glob => Some(
+                    GlobPattern::new(path.as_str(), identity.case_insensitive).map_err(
+                        |reason| StepGraphError::InvalidGlob {
+                            step: step.clone(),
+                            pattern: path.to_string(),
+                            reason,
+                        },
+                    )?,
+                ),
+            };
+            Ok(PlannedInput {
+                source: pattern.is_none(),
+                path,
+                kind: input.kind,
+                pattern,
+                producers: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// Normalizes the outputs `step` declares.
+pub(crate) fn plan_outputs(
+    step: &StepRef,
+    outputs: &[StepOutput],
+    identity: PathIdentity,
+) -> Result<Vec<PlannedOutput>, StepGraphError> {
+    outputs
         .iter()
         .map(|output| {
             Ok(PlannedOutput {
-                path: normalize(output.root, &output.path)?,
+                path: normalize(step, output.root, &output.path, identity)?,
                 kind: output.kind,
             })
         })
-        .collect::<Result<Vec<_>, StepGraphError>>()?;
-
-    Ok((step_inputs, planned_outputs))
+        .collect()
 }
 
 /// A compiled glob input.
+#[derive(Debug, Clone)]
 struct GlobPattern {
     /// Matches whole paths.
     matcher: GlobMatcher,
@@ -704,6 +1210,7 @@ struct GlobPattern {
 }
 
 /// One `/`-separated component of a glob pattern.
+#[derive(Debug, Clone)]
 enum ComponentPattern {
     /// `**`: any number of components.
     Recursive,
@@ -800,107 +1307,125 @@ fn ancestors(path: &str) -> impl Iterator<Item = &str> {
     path.match_indices('/').map(|(end, _)| &path[..end])
 }
 
+/// The entries of `map` whose keys lie strictly below the normalized path
+/// `key`.
+fn below<'m, V>(map: &'m BTreeMap<String, V>, key: &str) -> Range<'m, String, V> {
+    // Every key that starts with `<key>/` sorts at or after `<key>/` and
+    // before `<key>0`, as `0` directly follows `/`.
+    let start = format!("{key}/");
+    let end = format!("{key}0");
+    map.range::<str, _>((
+        Bound::Included(start.as_str()),
+        Bound::Excluded(end.as_str()),
+    ))
+}
+
+/// The position of the paths of `root` in a per-root index.
+fn root_slot(root: StepRoot) -> usize {
+    match root {
+        StepRoot::Work => 0,
+        StepRoot::Host => 1,
+        StepRoot::Build => 2,
+    }
+}
+
 /// Output `output` of step `step`.
-#[derive(Debug, Clone, Copy)]
-struct OutputRef {
-    step: usize,
-    output: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OutputRef {
+    pub(crate) step: usize,
+    pub(crate) output: usize,
     kind: StepOutputKind,
 }
 
-/// The producer of every declared output, by root and normalized path.
-struct OutputOwners<'a> {
-    /// The outputs of every step.
-    outputs: &'a [Vec<PlannedOutput>],
-    work: BTreeMap<&'a str, OutputRef>,
-    host: BTreeMap<&'a str, OutputRef>,
-    build: BTreeMap<&'a str, OutputRef>,
+impl OutputRef {
+    pub(crate) fn new(step: usize, output: usize, planned: &PlannedOutput) -> Self {
+        Self {
+            step,
+            output,
+            kind: planned.kind,
+        }
+    }
 }
 
-impl<'a> OutputOwners<'a> {
-    /// Indexes the outputs of all steps, rejecting any two outputs that are
-    /// the same path or lie inside one another.
-    fn new(
-        steps: &[&GraphStep],
-        outputs: &'a [Vec<PlannedOutput>],
-    ) -> Result<Self, StepGraphError> {
-        let mut owners = Self {
-            outputs,
-            work: BTreeMap::new(),
-            host: BTreeMap::new(),
-            build: BTreeMap::new(),
-        };
-        let conflict = |first: OutputRef, second: OutputRef| {
-            let (first, second) = if (first.step, first.output) <= (second.step, second.output) {
-                (first, second)
-            } else {
-                (second, first)
-            };
-            StepGraphError::ConflictingOutputs {
-                first_step: StepRef::new(first.step, steps[first.step]),
-                first_path: outputs[first.step][first.output].path.to_string(),
-                second_step: StepRef::new(second.step, steps[second.step]),
-                second_path: outputs[second.step][second.output].path.to_string(),
-            }
-        };
+/// Builds the error for two outputs that overlap, naming the one of the
+/// earlier step, or the earlier output of the same step, first.
+pub(crate) fn output_conflict<'o>(
+    first: OutputRef,
+    second: OutputRef,
+    step: impl Fn(usize) -> StepRef,
+    output: impl Fn(OutputRef) -> &'o PlannedOutput,
+) -> StepGraphError {
+    let (first, second) = if (first.step, first.output) <= (second.step, second.output) {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    StepGraphError::ConflictingOutputs {
+        first_step: step(first.step),
+        first_path: output(first).path.to_string(),
+        second_step: step(second.step),
+        second_path: output(second).path.to_string(),
+    }
+}
 
-        for output in Self::refs(outputs) {
-            let path = &outputs[output.step][output.output].path;
-            match owners.root_mut(path.identity_root).entry(path.key.as_str()) {
+/// The producer of every declared output, by root and normalized path.
+#[derive(Debug, Default)]
+pub(crate) struct OutputIndex {
+    roots: [BTreeMap<String, OutputRef>; 3],
+}
+
+impl OutputIndex {
+    fn root(&self, root: StepRoot) -> &BTreeMap<String, OutputRef> {
+        &self.roots[root_slot(root)]
+    }
+
+    /// Indexes `outputs` apart from the outputs indexed already, to
+    /// [`merge`](Self::merge) them once the rest of their declarations is
+    /// valid. Rejects, as the pair of the two, any output that is the same
+    /// path as another one, new or indexed, or lies inside it.
+    pub(crate) fn stage(
+        &self,
+        outputs: &[(OutputRef, &StepPath)],
+    ) -> Result<Self, (OutputRef, OutputRef)> {
+        let mut staged = Self::default();
+        for &(output, path) in outputs {
+            match staged.roots[root_slot(path.identity_root)].entry(path.key.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(output);
                 }
-                Entry::Occupied(entry) => return Err(conflict(*entry.get(), output)),
+                Entry::Occupied(entry) => return Err((*entry.get(), output)),
             }
         }
-        for output in Self::refs(outputs) {
-            let path = &outputs[output.step][output.output].path;
-            let map = owners.root(path.identity_root);
+        for &(output, path) in outputs {
+            let map = staged.root(path.identity_root);
             for dir in ancestors(&path.key) {
                 if let Some(owner) = map.get(dir) {
-                    return Err(conflict(*owner, output));
+                    return Err((*owner, output));
                 }
             }
         }
-        Ok(owners)
+        for &(output, path) in outputs {
+            if let Some(indexed) = self.overlapping(path) {
+                return Err((indexed, output));
+            }
+        }
+        Ok(staged)
     }
 
-    fn refs(outputs: &[Vec<PlannedOutput>]) -> impl Iterator<Item = OutputRef> + '_ {
-        outputs.iter().enumerate().flat_map(|(step, step_outputs)| {
-            step_outputs
-                .iter()
-                .enumerate()
-                .map(move |(output, planned)| OutputRef {
-                    step,
-                    output,
-                    kind: planned.kind,
-                })
-        })
-    }
-
-    fn root(&self, root: StepRoot) -> &BTreeMap<&'a str, OutputRef> {
-        match root {
-            StepRoot::Work => &self.work,
-            StepRoot::Host => &self.host,
-            StepRoot::Build => &self.build,
+    /// Adds the outputs of `staged` to the index.
+    pub(crate) fn merge(&mut self, staged: Self) {
+        for (mine, mut theirs) in self.roots.iter_mut().zip(staged.roots) {
+            mine.append(&mut theirs);
         }
     }
 
-    fn root_mut(&mut self, root: StepRoot) -> &mut BTreeMap<&'a str, OutputRef> {
-        match root {
-            StepRoot::Work => &mut self.work,
-            StepRoot::Host => &mut self.host,
-            StepRoot::Build => &mut self.build,
-        }
-    }
-
-    /// Every output of every step.
-    fn all(&self) -> impl Iterator<Item = OutputRef> + 'a {
-        Self::refs(self.outputs)
-    }
-
-    fn output(&self, output: &OutputRef) -> &'a PlannedOutput {
-        &self.outputs[output.step][output.output]
+    /// An output that is `path`, contains it, or lies inside it.
+    fn overlapping(&self, path: &StepPath) -> Option<OutputRef> {
+        let map = self.root(path.identity_root);
+        map.get(path.key.as_str())
+            .or_else(|| ancestors(&path.key).find_map(|dir| map.get(dir)))
+            .or_else(|| below(map, &path.key).next().map(|(_, owner)| owner))
+            .copied()
     }
 
     /// The output that is `path`, or the tree output containing it.
@@ -915,132 +1440,161 @@ impl<'a> OutputOwners<'a> {
             .copied()
     }
 
-    /// The outputs strictly below `path`.
-    fn below(&self, path: &StepPath) -> impl Iterator<Item = OutputRef> {
-        // Every key that starts with `<path>/` sorts at or after `<path>/`
-        // and before `<path>0`, as `0` directly follows `/`.
-        let start = format!("{}/", path.key);
-        let end = format!("{}0", path.key);
-        self.root(path.identity_root)
-            .range::<str, _>((
-                Bound::Included(start.as_str()),
-                Bound::Excluded(end.as_str()),
-            ))
-            .map(|(_, owner)| *owner)
+    /// Every indexed output.
+    fn refs(&self) -> impl Iterator<Item = OutputRef> + '_ {
+        self.roots.iter().flat_map(|map| map.values().copied())
+    }
+
+    /// Adds the outputs `input` covers to `covered`, each with whether it is
+    /// the input's path or a tree containing it. `output` looks up the
+    /// declaration of an indexed output.
+    pub(crate) fn cover<'o>(
+        &self,
+        input: &PlannedInput,
+        output: impl Fn(OutputRef) -> &'o PlannedOutput,
+        covered: &mut Vec<(OutputRef, bool)>,
+    ) {
+        match &input.pattern {
+            None => {
+                covered.extend(self.owner(&input.path).map(|owner| (owner, true)));
+                covered.extend(
+                    below(self.root(input.path.identity_root), &input.path.key)
+                        .map(|(_, owner)| (*owner, false)),
+                );
+            }
+            Some(pattern) => covered.extend(
+                self.refs()
+                    .filter(|owner| pattern.covers(&input.path, output(*owner)))
+                    .map(|owner| (owner, false)),
+            ),
+        }
+    }
+}
+
+/// Input `input` of step `step`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InputRef {
+    pub(crate) step: usize,
+    pub(crate) input: usize,
+}
+
+/// Declared inputs by root and normalized path, to find the inputs that
+/// cover a newly declared output.
+#[derive(Debug, Default)]
+pub(crate) struct InputIndex {
+    files: [BTreeMap<String, Vec<InputRef>>; 3],
+    globs: Vec<InputRef>,
+}
+
+impl InputIndex {
+    pub(crate) fn insert(&mut self, input: InputRef, planned: &PlannedInput) {
+        match planned.pattern {
+            None => self.files[root_slot(planned.path.identity_root)]
+                .entry(planned.path.key.clone())
+                .or_default()
+                .push(input),
+            Some(_) => self.globs.push(input),
+        }
+    }
+
+    /// Adds the indexed inputs that cover `output` to `readers`, each with
+    /// whether `output` is its path or a tree containing it, as
+    /// [`OutputIndex::cover`] finds them. `input` looks up the declaration
+    /// of an indexed input.
+    pub(crate) fn readers<'i>(
+        &self,
+        output: &PlannedOutput,
+        input: impl Fn(InputRef) -> &'i PlannedInput,
+        readers: &mut Vec<(InputRef, bool)>,
+    ) {
+        let path = &output.path;
+        let map = &self.files[root_slot(path.identity_root)];
+        if let Some(found) = map.get(path.key.as_str()) {
+            readers.extend(found.iter().map(|&reader| (reader, true)));
+        }
+        for dir in ancestors(&path.key) {
+            if let Some(found) = map.get(dir) {
+                readers.extend(found.iter().map(|&reader| (reader, false)));
+            }
+        }
+        if matches!(output.kind, StepOutputKind::Tree) {
+            for (_, found) in below(map, &path.key) {
+                readers.extend(found.iter().map(|&reader| (reader, true)));
+            }
+        }
+        for &reader in &self.globs {
+            let planned = input(reader);
+            if planned
+                .pattern
+                .as_ref()
+                .is_some_and(|pattern| pattern.covers(&planned.path, output))
+            {
+                readers.push((reader, false));
+            }
+        }
     }
 }
 
 /// Makes every barrier wait for the steps listed since the previous barrier,
 /// or for the previous barrier when there are none, and every step wait for
-/// the barrier listed last before it.
-fn add_barrier_edges(steps: &[&GraphStep], edges: &mut [Vec<Edge>]) {
+/// the barrier listed last before it. `barriers` tells for each step whether
+/// it is a barrier, `edges` holds the dependencies of each, and the first of
+/// them is the step at position `offset`.
+pub(crate) fn add_barrier_edges(
+    barriers: impl IntoIterator<Item = bool>,
+    offset: usize,
+    edges: &mut [Vec<Edge>],
+) {
     let barrier_edge = |from| Edge {
         from,
         reason: EdgeReason::Barrier,
     };
     let mut last_barrier = None;
     let mut since_barrier = Vec::new();
-    for (index, step) in steps.iter().enumerate() {
-        if step.is_barrier() {
+    for ((position, barrier), step_edges) in barriers.into_iter().enumerate().zip(edges) {
+        let index = offset + position;
+        if barrier {
             if since_barrier.is_empty() {
-                edges[index].extend(last_barrier.map(barrier_edge));
+                step_edges.extend(last_barrier.map(barrier_edge));
             }
-            edges[index].extend(since_barrier.drain(..).map(barrier_edge));
+            step_edges.extend(since_barrier.drain(..).map(barrier_edge));
             last_barrier = Some(index);
         } else {
-            edges[index].extend(last_barrier.map(barrier_edge));
+            step_edges.extend(last_barrier.map(barrier_edge));
             since_barrier.push(index);
         }
     }
 }
 
-/// Orders the nodes so that every node follows its dependencies, taking the
-/// ready node listed first at every point. Returns the nodes that cannot be
+/// Orders the steps so that every step follows its dependencies, taking the
+/// ready step listed first at every point. Returns the steps that cannot be
 /// ordered when there is a cycle.
-fn topological_order(nodes: &[Node]) -> Result<Vec<usize>, Vec<bool>> {
-    let mut waiting_for: Vec<usize> = nodes.iter().map(|node| node.dependencies.len()).collect();
+fn topological_order(
+    dependencies: &[Vec<usize>],
+    dependents: &[Vec<usize>],
+) -> Result<Vec<usize>, Vec<bool>> {
+    let mut waiting_for: Vec<usize> = dependencies.iter().map(Vec::len).collect();
     let mut ready: BinaryHeap<Reverse<usize>> = waiting_for
         .iter()
         .enumerate()
         .filter(|(_, count)| **count == 0)
         .map(|(index, _)| Reverse(index))
         .collect();
-    let mut order = Vec::with_capacity(nodes.len());
+    let mut order = Vec::with_capacity(dependencies.len());
     while let Some(Reverse(index)) = ready.pop() {
         order.push(index);
-        for &dependent in &nodes[index].dependents {
+        for &dependent in &dependents[index] {
             waiting_for[dependent] -= 1;
             if waiting_for[dependent] == 0 {
                 ready.push(Reverse(dependent));
             }
         }
     }
-    if order.len() == nodes.len() {
+    if order.len() == dependencies.len() {
         Ok(order)
     } else {
         Err(waiting_for.into_iter().map(|count| count > 0).collect())
     }
-}
-
-/// Describes a cycle among the `remaining` nodes, which could not be ordered.
-fn cycle_error(
-    steps: &[&GraphStep],
-    nodes: &[Node],
-    edges: &[Vec<Edge>],
-    remaining: &[bool],
-) -> StepGraphError {
-    // Every remaining node waits for a remaining node, so following those
-    // dependencies from any remaining node runs into a cycle.
-    let unordered_dependency = |index: usize| {
-        edges[index]
-            .iter()
-            .find(|edge| remaining[edge.from])
-            .copied()
-    };
-    let mut seen_at = vec![None; nodes.len()];
-    let mut path: Vec<(usize, Edge)> = Vec::new();
-    let mut current = remaining.iter().position(|&left| left);
-    while let Some(index) = current {
-        if let Some(start) = seen_at[index] {
-            path.drain(..start);
-            break;
-        }
-        let Some(edge) = unordered_dependency(index) else {
-            break;
-        };
-        seen_at[index] = Some(path.len());
-        path.push((index, edge));
-        current = Some(edge.from);
-    }
-
-    let step_ref = |index: usize| StepRef::new(index, steps[index]);
-    let chain = path
-        .iter()
-        .map(|&(waiting, edge)| {
-            let reason = match edge.reason {
-                EdgeReason::DependsOn => "it is named in `depends_on`".to_string(),
-                EdgeReason::Barrier if nodes[waiting].barrier => {
-                    "a step without `inputs` and `outputs` waits for every step listed before it"
-                        .to_string()
-                }
-                EdgeReason::Barrier => {
-                    "every step waits for the last step without `inputs` and `outputs` listed before it"
-                        .to_string()
-                }
-                EdgeReason::Artifact { input, output } => format!(
-                    "input `{}` needs its output `{}`",
-                    nodes[waiting].inputs[input].path, nodes[edge.from].outputs[output].path
-                ),
-            };
-            format!(
-                "  {} waits for {}: {reason}",
-                step_ref(waiting),
-                step_ref(edge.from)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    StepGraphError::Cycle { chain }
 }
 
 #[cfg(test)]
@@ -1093,6 +1647,7 @@ mod tests {
             inputs: Some(inputs),
             outputs: Some(outputs),
             depends_on: Vec::new(),
+            discover_after: Vec::new(),
         }
     }
 
@@ -1399,6 +1954,24 @@ mod tests {
             "build steps form a dependency cycle:
   step 0 (`self`) waits for step 0 (`self`): it is named in `depends_on`"
         );
+
+        // `discover_after` orders the listed steps like `depends_on`.
+        let discovery = [
+            GraphStep {
+                discover_after: vec!["b".to_string()],
+                ..declared("a", vec![], vec![])
+            },
+            GraphStep {
+                depends_on: vec!["a".to_string()],
+                ..declared("b", vec![], vec![])
+            },
+        ];
+        assert_eq!(
+            error(&discovery, Platform::Linux64),
+            "build steps form a dependency cycle:
+  step 0 (`a`) waits for step 1 (`b`): it is named in `discover_after`
+  step 1 (`b`) waits for step 0 (`a`): it is named in `depends_on`"
+        );
     }
 
     #[test]
@@ -1427,6 +2000,15 @@ mod tests {
             depends_on: vec!["missing".to_string()],
             ..barrier()
         };
+        let unknown_discovery = GraphStep {
+            discover_after: vec!["missing".to_string()],
+            ..barrier()
+        };
+        // Only a step declared while the build runs has a qualified id.
+        let qualified_dependency = GraphStep {
+            depends_on: vec!["g/a".to_string()],
+            ..barrier()
+        };
         let empty_id = GraphStep {
             id: Some(String::new()),
             ..barrier()
@@ -1448,8 +2030,20 @@ mod tests {
             ),
             (vec![empty_id], "step 0 has an empty `id`"),
             (
+                vec![declared("g/a", vec![], vec![])],
+                "step 0 has the id `g/a`; a step id is a name of ASCII letters, digits, `_`, `-` and `.`, as `/` joins the ids of a step and the steps it declares",
+            ),
+            (
                 vec![unknown_dependency],
                 "step 0 depends on `missing`, but no step has that id",
+            ),
+            (
+                vec![unknown_discovery],
+                "step 0 names `missing` in `discover_after`, but no step has that id",
+            ),
+            (
+                vec![declared("g", vec![], vec![]), qualified_dependency],
+                "step 1 depends on `g/a`, but no step has that id",
             ),
             (
                 vec![with_input(file("/usr/include"))],

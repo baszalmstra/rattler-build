@@ -67,13 +67,18 @@ supports:
   resolved against the host prefix (`$PREFIX` / `%PREFIX%`). Without `cwd`, a
   step runs in the work directory (`$SRC_DIR` / `%SRC_DIR%`).
 - **`env`** - Optional environment variables for this step only.
-- **`id`** - Optional name of the step, which `depends_on` refers to. Ids must
-  be unique among the steps selected by their `if` conditions, so an `if: unix`
-  and an `if: win` variant of a step can share one.
+- **`id`** - Optional name of the step, which `depends_on` and `discover_after`
+  refer to. Ids must be unique among the steps selected by their `if`
+  conditions, so an `if: unix` and an `if: win` variant of a step can share
+  one.
 - **`inputs`** and **`outputs`** - Optional files the step reads and writes.
   Declaring both puts the step in the step graph.
 - **`depends_on`** - Optional list of step ids that must succeed before this
-  step starts.
+  step starts. For a step that declares further steps, this includes every
+  step it declared (see [Dynamic build steps](#dynamic-build-steps)).
+- **`discover_after`** - Optional list of step ids whose declared steps must be
+  known before this step starts. The steps themselves need not have run yet
+  (see [Dynamic build steps](#dynamic-build-steps)).
 
 !!! note "Steps only inherit exported variables"
     Steps do not run inside the shell that performed activation. Shell
@@ -191,8 +196,11 @@ A declared step waits for:
   names a directory also waits for the producers of files inside it. A
   generated input is ready only once its producer has succeeded; a copy left by
   an earlier build does not count.
-- the steps named in its `depends_on`. `depends_on` only orders steps: it does
-  not say which files a step reads, so declare those as `inputs`.
+- the steps named in its `depends_on`, together with every step they declared.
+  `depends_on` only orders steps: it does not say which files a step reads, so
+  declare those as `inputs`.
+- the steps named in its `discover_after`, until the steps they declared are
+  known (see [Dynamic build steps](#dynamic-build-steps)).
 
 An exact input that no step produces must exist when its step is about to
 start. A glob input may also match no file at all.
@@ -231,8 +239,8 @@ parallel with the other steps of its group. Declaring only one of `inputs` and
 Before activating the environment or running any step, Rattler-Build checks the
 whole list and fails the build when:
 
-- two steps have the same `id`, or `depends_on` names an id that no selected
-  step has;
+- two steps have the same `id`, or `depends_on` or `discover_after` names an id
+  that no selected step has;
 - the dependencies form a cycle, including a step that reads its own output or
   depends on a step listed after a barrier that follows it;
 - two outputs name the same path or one lies inside a `tree` output of the
@@ -266,19 +274,322 @@ file a step reads or writes, or leave the step undeclared.
 
 !!! note "Not cached yet"
     Declarations only order steps and check their files. Every step runs in
-    every build; step results are not cached or reused.
+    every build; step results, including the declaration files of
+    [dynamic build steps](#dynamic-build-steps), are not cached or reused.
 
 !!! note "Debugging a build with steps"
     The `conda_build.sh` / `conda_build.bat` written to the work directory
     replays the steps one at a time, in an order that respects their
     dependencies and barriers. It does not reproduce which steps ran at the
-    same time, and it does not check declared inputs and outputs.
+    same time, and it does not check declared inputs and outputs. After a
+    build with [dynamic build steps](#dynamic-build-steps), it also replays
+    the steps they declared, and stops with an error when a step declares
+    different steps than it did in the build.
 
 !!! tip "Per-step process start-up"
     Every step starts its own shell process (`bash`, or `cmd.exe` on Windows),
     which costs more than running one more command in a script that is already
     running. Keep a group of tiny related commands in one step instead of
     splitting it into many steps; this cost is higher with `cmd.exe`.
+
+### Dynamic build steps
+
+Some files are only known once part of the build has run: the members of an
+archive, the modules Fortran sources define, the build edges a meta build system
+generates. A step can declare further steps for them after it has run. Every
+step (but not `build.script`) runs with two environment variables naming files
+in a directory of its own, `conda_build_steps/step_<n>/` in the work directory:
+
+| Variable                      | File          | Contents                                                             |
+| ----------------------------- | ------------- | -------------------------------------------------------------------- |
+| `RATTLER_BUILD_STEP_MANIFEST` | `steps.json`  | Steps to add to the build, and additions to steps not yet started    |
+| `RATTLER_BUILD_STEP_INPUTS`   | `inputs.json` | The files the step read                                              |
+
+A step does not have to write either file: a missing or empty file declares
+nothing. Both files are removed before their step starts, so a file an earlier
+build left behind is never read, and they are read only after the step
+succeeded. The declarations of a failing step are ignored. The files remain
+in the work directory until it is cleaned; use `--keep-build` to retain them
+after a successful package build.
+
+#### The step manifest
+
+The step manifest is a JSON document with `"version": 1`. `steps` declares new
+steps and `updates` adds to existing ones; both are optional:
+
+```json title="$RATTLER_BUILD_STEP_MANIFEST"
+{
+  "version": 1,
+  "steps": [
+    {
+      "id": "compile-a",
+      "run": "cc -c src/a.c -o obj/a.o",
+      "inputs": [{ "root": "work", "path": "src/a.c" }],
+      "outputs": [{ "root": "work", "path": "obj/a.o" }]
+    },
+    {
+      "id": "archive",
+      "run": ["ar rcs lib/libab.a obj/a.o obj/b.o"],
+      "env": { "ZERO_AR_DATE": "1" },
+      "inputs": [
+        { "root": "work", "path": "obj/a.o" },
+        { "root": "work", "path": "obj/b.o" }
+      ],
+      "outputs": [{ "root": "work", "path": "lib/libab.a" }]
+    }
+  ],
+  "updates": [
+    {
+      "step": "install",
+      "inputs": [{ "root": "work", "path": "lib/libab.a" }]
+    }
+  ]
+}
+```
+
+A declared step supports:
+
+- **`id`** - Required name of the step: ASCII letters, digits, `_`, `-` and `.`,
+  unique within the manifest. Step `archive` declared by step `gen` is
+  `gen/archive`, and a step declared by `gen/archive` in turn is
+  `gen/archive/<id>`.
+- **`run`** - Required script: a string or a list of commands, which run like
+  the `run` of a recipe step. Script files are not supported.
+- **`interpreter`**, **`env`** and **`cwd`** - Like those of a recipe step:
+  `cwd` is relative to the host prefix, and the step runs in the work directory
+  without it. `env` cannot set `RATTLER_BUILD_STEP_MANIFEST` or
+  `RATTLER_BUILD_STEP_INPUTS`.
+- **`inputs`** and **`outputs`** - Like those of a recipe step: declare both or
+  neither.
+- **`depends_on`** and **`discover_after`** - Like those of a recipe step (see
+  [Waiting for declared steps](#waiting-for-declared-steps)).
+
+A reference in `depends_on`, `discover_after` or `updates` names a step of the
+same manifest by its `id`, and any other step by its full id: `compile-a` above
+is `gen/compile-a` everywhere else, and a recipe step is named by its own `id`.
+A reference may name a step that another step has not declared yet, such as
+`h/b` while step `h` has not run; the referring step then waits for it.
+
+An update adds `inputs`, `outputs` and `depends_on` entries to a step that is
+already known and has not started. That step has to wait for the step writing
+the update, through `discover_after`, `depends_on` or its inputs, so that it
+cannot start before the update exists. Updates never remove anything.
+
+Declared steps start from the same activated environment as the recipe steps,
+with only their own `env` added: nothing the declaring step changed in its own
+environment reaches them. They get their own declaration files, so they can
+declare further steps themselves. Secrets reach them and stay masked in the log.
+
+#### Waiting for declared steps
+
+A step that reads files that declared steps write has to wait for the step that
+declares them. Otherwise nothing is known to produce those files when the step
+is due, so it starts right away and reads whatever is there, such as a copy an
+earlier build left. There are two ways to wait for a step `gen`:
+
+- **`depends_on: [gen]`** waits until `gen` and every step it declared, and
+  every step those declared in turn, have succeeded.
+- **`discover_after: [gen]`** only waits until `gen` has succeeded and the steps
+  it declared are known. From then on, the step's inputs wait for their
+  declared producers like any other inputs, so the step can start while other
+  steps `gen` declared still run.
+
+`discover_after` is also what keeps separate declaring steps from blocking each
+other. When step `g` declares `a` and `c`, step `h` declares `b`, and their
+files flow `g/a -> h/b -> g/c`, `h/b` needs `discover_after: ["g"]` and `g/c`
+needs `depends_on: ["h/b"]`, as `h` may not have declared `b` yet when `g` is
+done. With `depends_on: ["g"]` instead, `h/b` would wait for `g/c`, which waits
+for `h/b`.
+
+A recipe step without `inputs` and `outputs` listed after `gen` waits for
+everything `gen` declared, recursively, like it waits for every step before
+it. A declared step without `inputs` and `outputs` orders only the steps of its
+own manifest: it waits for those declared before it, and those declared after
+it wait for it.
+
+#### Mapping Ninja dynamic dependencies
+
+Ninja's [dynamic dependencies](https://ninja-build.org/manual.html#ref_dyndep)
+(`dyndep`) add implicit inputs and outputs to build statements once a scanner
+has written a dyndep file, before those statements run. Updates do the same,
+with `discover_after` on the statements in place of the dyndep file as an
+order-only input:
+
+- The scanner statement writing the dyndep file `dd` is a step writing the step
+  manifest.
+- A statement `build out: rule ins || dd` with `dyndep = dd` is a step with
+  `discover_after` on the scanner step.
+- A dyndep file entry `build out | implicit-outs: dyndep | implicit-ins` is an
+  update of the step for `out`, with the implicit outputs as `outputs` and the
+  implicit inputs as `inputs`.
+- A statement that only exists once the scanner has run, like the per-file
+  statements of a `build.ninja` a meta build system generates, is a step in
+  `steps`.
+- Any other order-only input `|| other` is `depends_on` on the step producing
+  `other`.
+- `restat = 1` has no counterpart, as steps run on every build rather than by
+  modification times.
+
+Fortran modules are the classic case: compiling a source that `use`s a module
+reads the `.mod` file that compiling the module's source writes, and only the
+sources say which is which. In this recipe for Linux and macOS, the compile
+steps only declare their sources, and `scan` adds the module files as outputs
+and inputs before either compile step starts, so `compile-main` waits for
+`compile-geometry`:
+
+```yaml title="recipe.yaml"
+build:
+  steps:
+    - id: scan
+      interpreter: python
+      inputs:
+        - root: work
+          path: src/*.f90
+          kind: glob
+      outputs: []
+      run: |
+        import glob, json, os, re
+
+        updates = {}
+        def add(source, field, module):
+            step = "compile-" + os.path.basename(source)[: -len(".f90")]
+            update = updates.setdefault(step, {"step": step})
+            path = "mod/" + module.lower() + ".mod"
+            update.setdefault(field, []).append({"root": "work", "path": path})
+
+        for source in sorted(glob.glob("src/*.f90")):
+            with open(source, encoding="utf-8") as file:
+                text = file.read()
+            for module in re.findall(r"(?im)^[ \t]*module[ \t]+(\w+)[ \t]*$", text):
+                add(source, "outputs", module)
+            for module in re.findall(r"(?im)^[ \t]*use[ \t]+(\w+)", text):
+                add(source, "inputs", module)
+
+        with open(os.environ["RATTLER_BUILD_STEP_MANIFEST"], "w") as manifest:
+            json.dump({"version": 1, "updates": list(updates.values())}, manifest)
+
+    - id: compile-geometry
+      discover_after: [scan]
+      inputs:
+        - root: work
+          path: src/geometry.f90
+      outputs:
+        - root: work
+          path: obj/geometry.o
+      run: |
+        mkdir -p mod obj
+        $FC -c src/geometry.f90 -Jmod -o obj/geometry.o
+
+    - id: compile-main
+      discover_after: [scan]
+      inputs:
+        - root: work
+          path: src/main.f90
+      outputs:
+        - root: work
+          path: obj/main.o
+      run: |
+        mkdir -p obj
+        $FC -c src/main.f90 -Imod -o obj/main.o
+
+    - id: link
+      inputs:
+        - root: work
+          path: obj/*.o
+          kind: glob
+      outputs:
+        - root: host
+          path: bin/area
+      run: |
+        mkdir -p "$PREFIX/bin"
+        $FC obj/*.o -o "$PREFIX/bin/area"
+
+requirements:
+  build:
+    - ${{ compiler('fortran') }}
+    - python
+```
+
+For a `geometry.f90` defining `module geometry` and a `main.f90` with
+`use geometry`, `scan` writes:
+
+```json
+{
+  "version": 1,
+  "updates": [
+    {
+      "step": "compile-geometry",
+      "outputs": [{ "root": "work", "path": "mod/geometry.mod" }]
+    },
+    {
+      "step": "compile-main",
+      "inputs": [{ "root": "work", "path": "mod/geometry.mod" }]
+    }
+  ]
+}
+```
+
+Every source needs a `compile-<name>` step with `discover_after: [scan]`, as an
+update of an unknown step fails the build. The
+[`ninja-archive` example](https://github.com/prefix-dev/rattler-build/tree/main/examples/dynamic-steps/ninja-archive)
+runs a real Ninja dyndep graph the other way: its scanner step declares the
+remaining Ninja statements as new steps, with the paths from the dyndep file.
+
+#### The input report
+
+The input report lists the files the step read, as `inputs` like those of a
+step:
+
+```json title="$RATTLER_BUILD_STEP_INPUTS"
+{
+  "version": 1,
+  "inputs": [
+    { "root": "work", "path": "include/config.h" },
+    { "root": "host", "path": "include/**/*.h", "kind": "glob" }
+  ]
+}
+```
+
+Rattler-Build checks the report and keeps it with the step, for a future step
+cache; it does not change the order in which steps run.
+
+#### Failures
+
+After a step succeeded, the build fails, naming that step, the declaration file
+and the steps and paths involved, when:
+
+- a declaration file is not JSON, has no `version` or another `version` than 1,
+  or has unknown fields;
+- a declared step has an invalid or duplicate `id`, declares only one of
+  `inputs` and `outputs`, has an absolute `cwd`, or sets an invalid or reserved
+  `env` name;
+- a declared path is invalid, an output belongs to another step already (the
+  same path, or a path inside a `tree` output, compared like
+  [recipe steps](#checks-and-failures)), or claims a file Rattler-Build writes;
+- a declared output is a file that a step which has already started reads,
+  exactly, through a glob or inside a directory, as that step could no longer
+  wait for it;
+- a reference names a step that nothing can declare anymore, such as `h/b` once
+  `h` has declared its steps without `b`;
+- the new dependencies form a cycle;
+- an update names an unknown step, a step that has started, a step the same
+  manifest declares, or a step that does not wait for the step writing the
+  update, or two updates name the same step;
+- the input report names an invalid path, or a file that a step it did not wait
+  for produces.
+
+Nothing an invalid manifest declares is added to the build, and the steps
+waiting for its step never start. As with any failing step, steps that are
+already running finish, and no further step starts. Secret values are masked in
+these errors.
+
+The `conda_build.sh` / `conda_build.bat` of a build with declared steps replays
+them too, in dependency order. When a step declares different steps during the
+replay than it did during the build, compared byte for byte, the replay stops
+after that step with an error instead of running steps the build never
+checked. `rattler-build debug setup` writes the script before any step has run,
+so its replay stops with an error after the first step that declares further
+steps (see [Debugging builds](debugging_builds.md#generated-steps)).
 
 ## Environment variables
 

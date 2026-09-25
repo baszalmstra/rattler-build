@@ -16,27 +16,42 @@
 //! activation sets or changes to contain a line break is cut at it, and its
 //! further lines can show up as variables of their own.
 //!
-//! The [`StepGraph`] of the steps decides when each step starts; it is
-//! validated before anything is written or activated. A step that declares
-//! neither inputs nor outputs is a barrier: it starts once every step before
-//! it has finished, and no later step starts before it has finished. Between
-//! barriers, a declared step starts as soon as the producers of its inputs
-//! and the steps it `depends_on` have succeeded, with at most as many steps
-//! running as the machine has cores. A declared input that no step produces
-//! must exist when its step starts. Right before a step starts, its declared
-//! outputs are cleared without following symbolic links, so they have to be
-//! created by the step itself and exist when it succeeds: in the work
-//! directory whatever an earlier build left there is removed, while in the
-//! host and build prefixes, which hold installed packages, an existing
-//! output fails the step unless it is an empty directory. Declared outputs
-//! may not claim the files rattler-build writes in the work directory, and
-//! a build with declared steps fails before anything runs when its work
-//! directory is, contains, or lies inside the host or build prefix. As
-//! clearing a directory tree output would also remove a step's working
-//! directory at or inside it, a step whose `cwd` (or the work directory,
-//! when it has none) is or lies inside one of its own tree outputs fails
-//! the build before anything runs as well; it may run in the parent of the
-//! tree instead.
+//! The [`DynamicStepGraph`] of the steps decides when each step starts; the
+//! steps of the recipe are validated before anything is written or
+//! activated. A step that declares neither inputs nor outputs is a barrier:
+//! it starts once every step before it has finished, and no later step
+//! starts before it has finished. Between barriers, a declared step starts
+//! as soon as the producers of its inputs and the steps it `depends_on` have
+//! succeeded, with at most as many steps running as the machine has cores.
+//! A declared input that no step produces must exist when its step starts.
+//! Right before a step starts, its declared outputs are cleared without
+//! following symbolic links, so they have to be created by the step itself
+//! and exist when it succeeds: in the work directory whatever an earlier
+//! build left there is removed, while in the host and build prefixes, which
+//! hold installed packages, an existing output fails the step unless it is
+//! an empty directory. Declared outputs may not claim the files
+//! rattler-build writes in the work directory, and a build with declared
+//! steps fails before anything runs when its work directory is, contains, or
+//! lies inside the host or build prefix. As clearing a directory tree output
+//! would also remove a step's working directory at or inside it, a step
+//! whose `cwd` (or the work directory, when it has none) is or lies inside
+//! one of its own tree outputs fails the build before anything runs as
+//! well; it may run in the parent of the tree instead.
+//!
+//! Every step has a directory of its own, `conda_build_steps/step_<index>`
+//! in the work directory, holding its wrapper and its declaration files (see
+//! [`crate::StepManifest`]): the steps of the recipe come first, in recipe
+//! order, followed by the steps they declare, in the order they are
+//! registered. The directory `conda_build_steps` is written anew by every
+//! build. The variables naming the declaration files are set in the wrapper
+//! after the step's own `env`, and the files are removed right before the
+//! step starts. Once a step succeeded, its declaration files are read and
+//! what it declares is validated like the steps of the recipe, including the
+//! checks above, and registered before any step can start that waits for
+//! it; invalid declarations fail the build like a failing step. A declared
+//! step runs from the same activated environment as every other step, with
+//! only its own `env` added, in its `cwd` resolved against the host prefix
+//! like the `cwd` of a recipe step, or in the work directory.
 //!
 //! The first step that fails stops further steps from starting. Steps that
 //! are already running are waited for, not killed, and the first failure is
@@ -44,24 +59,26 @@
 //! step processes that are still running, just as it does not kill the
 //! process of a `build.script`.
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+mod replay;
+mod scheduler;
+
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{FileType, Metadata};
 use std::io;
-use std::num::NonZeroUsize;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 
-use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::IndexMap;
 use rattler_shell::shell::{Shell, ShellEnum};
 
 use crate::{
-    InterpreterError, PlannedOutput, StepGraph, StepOutputKind, StepPath, StepRoot,
+    DeclarationFile, DeclarationPaths, InterpreterError, PlannedOutput, StepManifest,
+    StepOutputKind, StepRoot,
+    dynamic_graph::DynamicStepGraph,
     execution::{
         BuildScriptSection, ExecutionArgs, run_process_with_replacements, script_generation_error,
-        write_activation_script, write_native_wrapper, write_wrapper_script,
+        write_activation_script, write_wrapper_script,
     },
     runner::resolve_process_env,
     shell_dialect::{ShellDialect, quote_arg, shell_dialect, write_shell_script},
@@ -84,21 +101,30 @@ const ENGINE_FILES: [&str; 5] = [
 /// Variable names and values of a process environment, as the OS stores them.
 type ProcessEnv = IndexMap<OsString, OsString>;
 
-/// Runs every section of `exec_args` as an independent build step.
+/// Runs every section of `exec_args` as an independent build step, together
+/// with the steps they declare.
 ///
-/// The step graph of the sections is validated first; an invalid graph fails
+/// The steps of the sections are validated first; an invalid graph fails
 /// before any script is written or activation runs. Activation then runs
 /// once, in the work directory, and the environment it exports is captured.
 /// Each section runs in its own process started from that environment, when
 /// the step graph lets it start (see the module documentation); its `env`
-/// applies to that section only and it runs in its `cwd` resolved against
-/// the work directory, or in the work directory when it has none. The first
-/// failing section stops further sections from starting and is named in the
-/// returned error once the sections still running have finished.
+/// applies to that section only and it runs in its resolved `cwd` (for a
+/// recipe step, its declared `cwd` resolved against the host prefix; a
+/// relative section `cwd` is taken relative to the work directory), or in
+/// the work directory when it has none. The steps
+/// a section declares run the same way once they are registered. The first
+/// failing step, or the first invalid declaration, stops further steps from
+/// starting and is named in the returned error once the steps still running
+/// have finished.
 ///
-/// The scripts run are the ones [`create_steps_script`] writes.
+/// The scripts run are the ones [`create_steps_script`] writes, together
+/// with the wrappers of the declared steps. Once the steps have finished,
+/// whether they succeeded or not, the replay wrapper is written again to
+/// replay every step known by then, the declared ones included.
 pub async fn run_steps(exec_args: ExecutionArgs) -> Result<(), InterpreterError> {
-    let graph = step_graph(&exec_args)?;
+    let checks = PathChecks::new(&exec_args);
+    let mut graph = step_graph(&exec_args, &checks)?;
     let dialect = shell_dialect(exec_args.context.runtime().process_platform());
     let scripts = write_step_scripts(&exec_args, dialect.as_ref(), &graph).await?;
     let launcher = Launcher::new(&exec_args, dialect.as_ref());
@@ -111,20 +137,36 @@ pub async fn run_steps(exec_args: ExecutionArgs) -> Result<(), InterpreterError>
     );
     let activated_env = capture_activated_env(&launcher, &scripts.activation, &process_env).await?;
 
-    StepRunner {
-        launcher: &launcher,
-        graph: &graph,
-        step_scripts: &scripts.steps,
-        activated_env: &activated_env,
+    let mut steps = scripts.steps;
+    let outcome = scheduler::StepRunner::new(&launcher, &checks, &activated_env)
+        .run_all(&mut graph, &mut steps)
+        .await;
+
+    let replay = replay::write_replay(
+        &exec_args,
+        dialect.as_ref(),
+        &scripts.activation,
+        &graph,
+        &steps,
+    )
+    .await;
+    match (outcome, replay) {
+        (Ok(()), replay) => replay.map(drop),
+        (Err(err), Ok(_)) => Err(err),
+        (Err(err), Err(replay_err)) => {
+            tracing::warn!(
+                "Could not write the build script replaying the steps: {}",
+                script_generation_error(replay_err)
+            );
+            Err(err)
+        }
     }
-    .run_all()
-    .await
 }
 
 /// Writes the scripts of a build with steps without running them.
 ///
-/// The step graph of the sections is validated first; an invalid graph
-/// fails before any script is written. Next to the activation script
+/// The steps of the sections are validated first; an invalid graph fails
+/// before any script is written. Next to the activation script
 /// `build_env.<ext>`, every step gets its own wrapper
 /// `conda_build_steps/step_<index>/conda_build.<ext>`, together with its
 /// interpreter scripts. A step wrapper never activates: it runs its step in
@@ -141,8 +183,17 @@ pub async fn run_steps(exec_args: ExecutionArgs) -> Result<(), InterpreterError>
 /// but not the overlap of steps that run concurrently in a build. It does
 /// not check declared inputs and outputs. The first failing step stops it
 /// with that step's status, even when activation turned `set -e` off.
+///
+/// The replay cannot run steps that are only declared while it runs: it
+/// removes the declaration files of every step before starting it, and a
+/// step that writes a step manifest declaring anything stops the replay
+/// with status 1 right after it. After a build, [`run_steps`] writes a
+/// replay that also runs the steps declared during that build, and that
+/// stops right after a step whose step manifest differs in any byte from
+/// the one it wrote during the build.
 pub async fn create_steps_script(exec_args: ExecutionArgs) -> Result<(), std::io::Error> {
-    let graph = step_graph(&exec_args).map_err(script_generation_error)?;
+    let checks = PathChecks::new(&exec_args);
+    let graph = step_graph(&exec_args, &checks).map_err(script_generation_error)?;
     let dialect = shell_dialect(exec_args.context.runtime().process_platform());
     let scripts = write_step_scripts(&exec_args, dialect.as_ref(), &graph)
         .await
@@ -155,7 +206,66 @@ pub async fn create_steps_script(exec_args: ExecutionArgs) -> Result<(), std::io
 /// Validates the step declarations of the sections of `args` and plans
 /// their order, with path identities matched the way the file system of the
 /// platform the steps run on compares them, and `host` and `build` paths
-/// naming the same files when the build shares one prefix.
+/// naming the same files when the build shares one prefix. The declared
+/// outputs also have to pass `checks`.
+fn step_graph(
+    args: &ExecutionArgs,
+    checks: &PathChecks<'_>,
+) -> Result<DynamicStepGraph, InterpreterError> {
+    let invalid = |message: String| {
+        InterpreterError::ExecutionFailed(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid build steps: {message}"),
+        ))
+    };
+    let checked = |result: Result<(), CheckError>| match result {
+        Ok(()) => Ok(()),
+        Err(CheckError::Invalid(message)) => Err(invalid(message)),
+        Err(CheckError::Io(err)) => Err(InterpreterError::from(err)),
+    };
+    let graph = DynamicStepGraph::new(
+        args.sections.iter().map(|section| &section.graph),
+        args.context.runtime().process_platform(),
+        args.context.layout(),
+    )
+    .map_err(|err| invalid(err.to_string()))?;
+
+    for (step, section) in args.sections.iter().enumerate() {
+        let name = step_name(section, step);
+        for output in graph.outputs(step) {
+            checked(checks.check_claim(&name, output))?;
+        }
+    }
+    if (0..graph.len()).any(|step| !graph.is_barrier(step)) {
+        checked(checks.check_prefixes())?;
+    }
+    for (step, section) in args.sections.iter().enumerate() {
+        checked(checks.check_tree_outputs(
+            &step_name(section, step),
+            section.cwd.as_deref(),
+            graph.outputs(step),
+        ))?;
+    }
+    Ok(graph)
+}
+
+/// Why declared outputs cannot be used in a build.
+enum CheckError {
+    /// The declarations are invalid, for the reason given.
+    Invalid(String),
+    /// A path could not be inspected.
+    Io(io::Error),
+}
+
+impl From<io::Error> for CheckError {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+/// The checks the declared outputs of the steps of a build have to pass
+/// beyond those of the step graph, for the steps of the recipe and for the
+/// steps they declare.
 ///
 /// As a step's outputs are cleared before it starts, declared outputs must
 /// also leave alone the files rattler-build writes in the work directory
@@ -163,49 +273,53 @@ pub async fn create_steps_script(exec_args: ExecutionArgs) -> Result<(), std::io
 /// or lie inside a prefix, where clearing a `work` output would remove
 /// installed files. For the same reason, no step may run in, or inside,
 /// one of its own directory tree outputs.
-fn step_graph(args: &ExecutionArgs) -> Result<StepGraph, InterpreterError> {
-    let invalid = |message: String| {
-        InterpreterError::ExecutionFailed(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid build steps: {message}"),
-        ))
-    };
-    let platform = args.context.runtime().process_platform();
-    let graph = StepGraph::new(
-        args.sections.iter().map(|section| &section.graph),
-        platform,
-        args.context.layout(),
-    )
-    .map_err(|err| invalid(err.to_string()))?;
+struct PathChecks<'a> {
+    args: &'a ExecutionArgs,
+    /// Whether names compare case-insensitively, as the step graph compares
+    /// them on Windows and macOS, whose file systems usually do.
+    case_insensitive: bool,
+    /// Whether the steps run on Windows.
+    windows: bool,
+}
 
-    // The graph identifies paths case-insensitively on Windows and macOS,
-    // whose file systems usually compare names that way.
-    let case_insensitive = platform.is_windows() || platform.is_osx();
-    let names = |name: &str, reserved: &str| {
-        if case_insensitive {
-            name.to_lowercase() == reserved
-        } else {
-            name == reserved
-        }
-    };
-    for (step, section) in args.sections.iter().enumerate() {
-        for output in graph.outputs(step) {
-            let path = output.path();
-            let top_level = path.as_str().split('/').next().unwrap_or_default();
-            let reserved = path.root() == StepRoot::Work
-                && (names(top_level, STEP_ARTIFACTS_DIR)
-                    || ENGINE_FILES.iter().any(|&file| names(path.as_str(), file)));
-            if reserved {
-                return Err(invalid(format!(
-                    "{} declares the output `{path}`, which rattler-build writes itself; \
-                     declare another path",
-                    step_name(section, step)
-                )));
-            }
+impl<'a> PathChecks<'a> {
+    fn new(args: &'a ExecutionArgs) -> Self {
+        let platform = args.context.runtime().process_platform();
+        Self {
+            args,
+            case_insensitive: platform.is_windows() || platform.is_osx(),
+            windows: platform.is_windows(),
         }
     }
 
-    if (0..graph.len()).any(|step| !graph.is_barrier(step)) {
+    /// Checks that `output` of the step named `name` does not claim a file
+    /// rattler-build writes in the work directory.
+    fn check_claim(&self, name: &str, output: &PlannedOutput) -> Result<(), CheckError> {
+        let names = |name: &str, reserved: &str| {
+            if self.case_insensitive {
+                name.to_lowercase() == reserved
+            } else {
+                name == reserved
+            }
+        };
+        let path = output.path();
+        let top_level = path.as_str().split('/').next().unwrap_or_default();
+        let reserved = path.root() == StepRoot::Work
+            && (names(top_level, STEP_ARTIFACTS_DIR)
+                || ENGINE_FILES.iter().any(|&file| names(path.as_str(), file)));
+        if reserved {
+            return Err(CheckError::Invalid(format!(
+                "{name} declares the output `{path}`, which rattler-build writes itself; \
+                 declare another path"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Checks that the work directory and the prefixes are separate
+    /// directories, which declared steps require.
+    fn check_prefixes(&self) -> Result<(), CheckError> {
+        let args = self.args;
         let work_dir = canonical_root(&args.work_dir)?;
         let prefixes = [
             ("host prefix", args.context.host().path()),
@@ -213,10 +327,10 @@ fn step_graph(args: &ExecutionArgs) -> Result<StepGraph, InterpreterError> {
         ];
         for (name, prefix) in prefixes {
             let prefix_dir = canonical_root(prefix)?;
-            if nested(&work_dir, &prefix_dir, case_insensitive)
-                || nested(&prefix_dir, &work_dir, case_insensitive)
+            if nested(&work_dir, &prefix_dir, self.case_insensitive)
+                || nested(&prefix_dir, &work_dir, self.case_insensitive)
             {
-                return Err(invalid(format!(
+                return Err(CheckError::Invalid(format!(
                     "the work directory {} and the {name} {} are the same directory or one \
                      contains the other, so clearing the declared outputs of a step could \
                      remove installed files; use separate directories for declared build steps",
@@ -225,46 +339,54 @@ fn step_graph(args: &ExecutionArgs) -> Result<StepGraph, InterpreterError> {
                 )));
             }
         }
+        Ok(())
     }
 
-    // Clearing a tree output right before its step starts would remove the
-    // directory the step is about to run in when that is the tree or lies
-    // inside it, and the step would fail only after the steps before it
-    // ran. Both sides are compared where they physically are, as far as
-    // they exist, so links and other names of the same directory count too.
-    // The tree is not created in advance instead: a step that creates
-    // nothing would then seem to have produced its output.
-    let windows = platform.is_windows();
-    for (step, section) in args.sections.iter().enumerate() {
-        let mut trees = graph
-            .outputs(step)
-            .iter()
+    /// Checks that the step named `name`, running in `cwd` (resolved
+    /// against the work directory, or the work directory itself), does not
+    /// run in or inside one of its tree `outputs`.
+    ///
+    /// Clearing a tree output right before its step starts would remove the
+    /// directory the step is about to run in when that is the tree or lies
+    /// inside it, and the step would fail only after the steps before it
+    /// ran. Both sides are compared where they physically are, as far as
+    /// they exist, so links and other names of the same directory count too.
+    /// The tree is not created in advance instead: a step that creates
+    /// nothing would then seem to have produced its output.
+    fn check_tree_outputs<'o>(
+        &self,
+        name: &str,
+        cwd: Option<&Path>,
+        outputs: impl IntoIterator<Item = &'o PlannedOutput>,
+    ) -> Result<(), CheckError> {
+        let args = self.args;
+        let mut trees = outputs
+            .into_iter()
             .filter(|output| matches!(output.kind(), StepOutputKind::Tree))
             .peekable();
         if trees.peek().is_none() {
-            continue;
+            return Ok(());
         }
-        let cwd = match &section.cwd {
+        let cwd = match cwd {
             Some(cwd) => args.work_dir.join(cwd),
             None => args.work_dir.clone(),
         };
-        let physical_cwd = canonical_root(&lexical_path(&cwd, windows))?;
+        let physical_cwd = canonical_root(&lexical_path(&cwd, self.windows))?;
         for output in trees {
             let path = output.path();
             let physical_output = output_location(&path.resolve(root_dir(args, path.root())))?;
-            if nested(&physical_output, &physical_cwd, case_insensitive) {
-                return Err(invalid(format!(
-                    "{} runs in {}, which is or lies inside its declared output `{path}`; \
+            if nested(&physical_output, &physical_cwd, self.case_insensitive) {
+                return Err(CheckError::Invalid(format!(
+                    "{name} runs in {}, which is or lies inside its declared output `{path}`; \
                      outputs are cleared right before their step starts, which would remove \
                      the directory the step runs in, so run it outside the output, for \
                      example in its parent directory",
-                    step_name(section, step),
                     cwd.display()
                 )));
             }
         }
+        Ok(())
     }
-    Ok(graph)
 }
 
 /// Returns the directory of `root` in the build of `args`.
@@ -398,58 +520,112 @@ fn step_name(section: &BuildScriptSection, step: usize) -> String {
     }
 }
 
+/// A step of a build: its files in the work directory and what it declared.
+struct StepRecord {
+    /// The name of the step in the log.
+    name: String,
+    /// The directory the step runs in, as its section has it: relative to
+    /// the work directory, or absolute; `None` for the work directory.
+    cwd: Option<PathBuf>,
+    /// The directory of the step, `conda_build_steps/step_<index>`.
+    dir: PathBuf,
+    /// The wrapper running the step.
+    wrapper: PathBuf,
+    /// The declaration files of the step.
+    declarations: DeclarationPaths,
+    /// The step manifest the step wrote, once it has been registered. Its
+    /// input report stays in its file, where the build left it.
+    manifest: Option<DeclarationFile<StepManifest>>,
+}
+
 /// The generated scripts of a build with steps.
 struct StepScripts {
     /// The combined activation script `build_env.<ext>`.
     activation: PathBuf,
-    /// The wrapper of every step, by step index.
-    steps: Vec<PathBuf>,
+    /// Every step of the recipe with its wrapper, by step index.
+    steps: Vec<StepRecord>,
     /// The wrapper replaying all steps, `conda_build.<ext>`.
     replay: PathBuf,
 }
 
 /// Writes the activation script, the step wrappers and the replay wrapper
-/// described by [`create_steps_script`].
+/// described by [`create_steps_script`], after removing the step
+/// directories an earlier build left.
 async fn write_step_scripts(
     args: &ExecutionArgs,
     dialect: &dyn ShellDialect,
-    graph: &StepGraph,
+    graph: &DynamicStepGraph,
 ) -> Result<StepScripts, InterpreterError> {
+    remove_entry(&args.work_dir.join(STEP_ARTIFACTS_DIR)).await?;
     let activation = write_activation_script(args, dialect).await?;
 
-    let steps_dir = args.work_dir.join(STEP_ARTIFACTS_DIR);
     let mut steps = Vec::with_capacity(args.sections.len());
-    for (position, section) in args.sections.iter().enumerate() {
-        let step_dir = steps_dir.join(format!("step_{position}"));
-        tokio::fs::create_dir_all(&step_dir).await?;
-        let step_script = write_wrapper_script(
-            args,
-            dialect,
-            &step_dir,
-            None,
-            std::slice::from_ref(section),
-            Some(&args.work_dir),
-        )
-        .await?;
-        steps.push(step_script);
+    for (index, section) in args.sections.iter().enumerate() {
+        let name = step_name(section, index);
+        steps.push(write_step_wrapper(args, dialect, index, name, section).await?);
     }
 
-    let replay_fragments = graph
-        .topological_order()
-        .iter()
-        .map(|&step| dialect.child_script_command(&steps[step], &args.context))
-        .collect::<Vec<_>>();
-    let replay = args
-        .work_dir
-        .join(format!("conda_build.{}", dialect.shell().extension()));
-    let replay_preamble = dialect.replay_preamble(&replay, &activation, &args.context);
-    write_native_wrapper(dialect, &replay, &replay_preamble, &replay_fragments).await?;
-
+    let replay = replay::write_replay(args, dialect, &activation, graph, &steps).await?;
     Ok(StepScripts {
         activation,
         steps,
         replay,
     })
+}
+
+/// Writes the wrapper of step `index`, named `name`, which runs `section`,
+/// into the new directory `conda_build_steps/step_<index>`, replacing
+/// whatever was there. The wrapper runs `section` in its `cwd` resolved
+/// against the work directory, or in the work directory, and sets the
+/// variables naming the declaration files in the directory.
+async fn write_step_wrapper(
+    args: &ExecutionArgs,
+    dialect: &dyn ShellDialect,
+    index: usize,
+    name: String,
+    section: &BuildScriptSection,
+) -> Result<StepRecord, InterpreterError> {
+    let dir = args
+        .work_dir
+        .join(STEP_ARTIFACTS_DIR)
+        .join(format!("step_{index}"));
+    remove_entry(&dir).await?;
+    tokio::fs::create_dir_all(&dir).await?;
+    let declarations = DeclarationPaths::in_dir(&dir);
+    let wrapper = write_wrapper_script(
+        args,
+        dialect,
+        &dir,
+        None,
+        std::slice::from_ref(section),
+        Some(&args.work_dir),
+        Some(&declarations),
+    )
+    .await?;
+    Ok(StepRecord {
+        name,
+        cwd: section.cwd.clone(),
+        dir,
+        wrapper,
+        declarations,
+        manifest: None,
+    })
+}
+
+/// Removes the file, symbolic link or directory tree at `path`, if there is
+/// one, without following symbolic links.
+async fn remove_entry(path: &Path) -> io::Result<()> {
+    let Some(metadata) = entry_metadata(path, false).await? else {
+        return Ok(());
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        remove_symlink(path, file_type).await
+    } else if file_type.is_dir() {
+        tokio::fs::remove_dir_all(path).await
+    } else {
+        tokio::fs::remove_file(path).await
+    }
 }
 
 /// Runs activation once in the native wrapper shell, in the work directory,
@@ -663,7 +839,9 @@ impl<'a> Launcher<'a> {
         Ok(output.status)
     }
 
-    /// Logs and builds the error for a failed activation or step process.
+    /// Logs and builds the error for a failed activation or step process,
+    /// with the secrets of the build masked, as the name of a declared step
+    /// comes from what a step wrote.
     fn failed(
         &self,
         what: &str,
@@ -682,244 +860,59 @@ impl<'a> Launcher<'a> {
                 )
             })
             .unwrap_or_default();
-        let debug_info = self
-            .dialect
-            .debug_info(&self.args.work_dir, &self.args.context);
-        tracing::error!("{what} failed with status {status_code}{step_script}");
+        let failure = self.redact(&format!(
+            "{what} failed with status {status_code}{step_script}"
+        ));
+        let debug_info = self.redact(
+            &self
+                .dialect
+                .debug_info(&self.args.work_dir, &self.args.context),
+        );
+        tracing::error!("{failure}");
         tracing::error!("{debug_info}");
-        InterpreterError::ExecutionFailed(std::io::Error::other(format!(
-            "{what} failed with status {status_code}{step_script}{debug_info}"
-        )))
+        InterpreterError::ExecutionFailed(std::io::Error::other(format!("{failure}{debug_info}")))
+    }
+
+    /// Returns `message` with the secrets of the build masked; see
+    /// [`redact`].
+    fn redact(&self, message: &str) -> String {
+        redact(self.args, message)
+    }
+
+    /// Returns `err` with the secrets of the build masked in its message.
+    fn redact_error(&self, err: InterpreterError) -> InterpreterError {
+        match err {
+            InterpreterError::ExecutionFailed(err) => {
+                let message = err.to_string();
+                let redacted = self.redact(&message);
+                if redacted == message {
+                    InterpreterError::ExecutionFailed(err)
+                } else {
+                    InterpreterError::ExecutionFailed(io::Error::new(err.kind(), redacted))
+                }
+            }
+            other => other,
+        }
     }
 }
 
-/// Runs the steps of one build from their activated environment, in the
-/// order their [`StepGraph`] allows.
-struct StepRunner<'a> {
-    launcher: &'a Launcher<'a>,
-    graph: &'a StepGraph,
-    /// The wrapper of every step, by step index.
-    step_scripts: &'a [PathBuf],
-    activated_env: &'a ProcessEnv,
-}
-
-/// Why a build step did not succeed.
-enum StepFailure<'a> {
-    /// A declared input that no step produces did not exist when the step
-    /// was about to start.
-    MissingInput(&'a StepPath),
-    /// The step process could not be run, or a declared path could not be
-    /// inspected.
-    Error(InterpreterError),
-    /// The step process exited unsuccessfully.
-    Status(ExitStatus),
-    /// What was at a declared output before the step started could not be
-    /// cleared.
-    OccupiedOutput(&'a PlannedOutput, io::Error),
-    /// The step process succeeded without creating a declared output.
-    MissingOutput(&'a PlannedOutput),
-}
-
-impl<'a> StepRunner<'a> {
-    /// Runs every step once all its dependencies have succeeded, lowest step
-    /// index first among the steps that can start, with at most as many
-    /// steps running as the machine has cores.
-    ///
-    /// After the first failure no further step starts; the steps that are
-    /// running are waited for, and the first failure is returned.
-    async fn run_all(&self) -> Result<(), InterpreterError> {
-        let graph = self.graph;
-        let step_count = graph.len();
-        let max_running = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let mut unfinished_dependencies = (0..step_count)
-            .map(|step| graph.dependencies(step).len())
-            .collect::<Vec<_>>();
-        let mut ready = (0..step_count)
-            .filter(|&step| unfinished_dependencies[step] == 0)
-            .map(Reverse)
-            .collect::<BinaryHeap<_>>();
-        let mut running = FuturesUnordered::new();
-        let mut succeeded = 0;
-        let mut first_error = None;
-
-        loop {
-            if first_error.is_none() {
-                while running.len() < max_running
-                    && let Some(Reverse(step)) = ready.pop()
-                {
-                    running.push(async move { (step, self.run_step(step).await) });
-                }
-            }
-            let Some((step, result)) = running.next().await else {
-                break;
-            };
-            match result {
-                Ok(()) => {
-                    succeeded += 1;
-                    for &dependent in graph.dependents(step) {
-                        unfinished_dependencies[dependent] -= 1;
-                        if unfinished_dependencies[dependent] == 0 {
-                            ready.push(Reverse(dependent));
-                        }
-                    }
-                }
-                Err(failure) if first_error.is_none() => {
-                    first_error = Some(self.report(step, failure));
-                    if !running.is_empty() {
-                        tracing::info!(
-                            "Waiting for the {} build step(s) still running to finish",
-                            running.len()
-                        );
-                    }
-                }
-                Err(failure) => {
-                    tracing::error!(
-                        "{} after an earlier build step failed",
-                        self.describe(step, &failure)
-                    );
-                }
-            }
-        }
-
-        match first_error {
-            Some(error) => Err(error),
-            None if succeeded == step_count => Ok(()),
-            None => Err(InterpreterError::ExecutionFailed(io::Error::other(
-                format!(
-                    "{} of {step_count} build steps never became ready to run",
-                    step_count - succeeded
-                ),
-            ))),
-        }
-    }
-
-    /// Runs step `step`, whose dependencies have all succeeded: checks that
-    /// its declared inputs that no step produces exist, clears its declared
-    /// outputs, runs its wrapper, and checks that it created its declared
-    /// outputs.
-    async fn run_step(&self, step: usize) -> Result<(), StepFailure<'a>> {
-        let graph = self.graph;
-        for input in graph.source_inputs(step) {
-            let metadata = entry_metadata(&self.resolve(input), false)
-                .await
-                .map_err(|err| StepFailure::Error(err.into()))?;
-            if metadata.is_none() {
-                return Err(StepFailure::MissingInput(input));
-            }
-        }
-
-        // Only what this step creates may satisfy its outputs. The graph
-        // rejects declared inputs and other declared outputs at or below
-        // them, so clearing them touches nothing another step declares.
-        for output in graph.outputs(step) {
-            clear_output(self.root_dir(output.path().root()), output)
-                .await
-                .map_err(|err| StepFailure::OccupiedOutput(output, err))?;
-        }
-
-        // Declared steps can overlap, so mark where each one starts and ends
-        // in the log; barriers run alone and log as before.
-        let declared = !graph.is_barrier(step);
-        if declared {
-            tracing::info!("Starting build {}", self.step_name(step));
-        }
-        let status = self
-            .launcher
-            .run(&self.step_scripts[step], self.activated_env)
-            .await
-            .map_err(StepFailure::Error)?;
-        if !status.success() {
-            return Err(StepFailure::Status(status));
-        }
-
-        for output in graph.outputs(step) {
-            let path = self.resolve(output.path());
-            let present = match output.kind() {
-                StepOutputKind::File => entry_metadata(&path, false)
-                    .await
-                    .map(|metadata| metadata.is_some_and(|metadata| !metadata.is_dir())),
-                StepOutputKind::Tree => entry_metadata(&path, true)
-                    .await
-                    .map(|metadata| metadata.is_some_and(|metadata| metadata.is_dir())),
-            }
-            .map_err(|err| StepFailure::Error(err.into()))?;
-            if !present {
-                return Err(StepFailure::MissingOutput(output));
-            }
-        }
-        if declared {
-            tracing::info!("Finished build {}", self.step_name(step));
-        }
-        Ok(())
-    }
-
-    /// Returns where `path` is in the file system of this build.
-    fn resolve(&self, path: &StepPath) -> PathBuf {
-        path.resolve(self.root_dir(path.root()))
-    }
-
-    /// Returns the directory of `root` in this build.
-    fn root_dir(&self, root: StepRoot) -> &Path {
-        root_dir(self.launcher.args, root)
-    }
-
-    /// Names step `step` in the log: its label, with its id if it has one.
-    fn step_name(&self, step: usize) -> String {
-        step_name(&self.launcher.args.sections[step], step)
-    }
-
-    /// Describes the failure of step `step` in one line.
-    fn describe(&self, step: usize, failure: &StepFailure<'_>) -> String {
-        let name = self.step_name(step);
-        match failure {
-            StepFailure::MissingInput(input) => format!(
-                "Build {name} cannot start: its declared input `{input}` does not exist at {}, \
-                 and no step declares it as an output",
-                self.resolve(input).display()
-            ),
-            StepFailure::Error(err) => format!("Build {name} failed: {err}"),
-            StepFailure::Status(status) => format!(
-                "Build {name} failed with status {}",
-                status.code().unwrap_or(1)
-            ),
-            StepFailure::OccupiedOutput(output, err) => format!(
-                "Build {name} cannot start: its declared output {} `{}` at {} cannot be \
-                 cleared: {err}",
-                output_kind_name(output.kind()),
-                output.path(),
-                self.resolve(output.path()).display()
-            ),
-            StepFailure::MissingOutput(output) => format!(
-                "Build {name} succeeded but did not create its declared output {} `{}` at {}",
-                output_kind_name(output.kind()),
-                output.path(),
-                self.resolve(output.path()).display()
-            ),
-        }
-    }
-
-    /// Logs the failure of step `step` and returns it as the error of the
-    /// build.
-    fn report(&self, step: usize, failure: StepFailure<'_>) -> InterpreterError {
-        match failure {
-            StepFailure::Status(status) => self.launcher.failed(
-                &format!("Build {}", self.step_name(step)),
-                status,
-                Some(&self.step_scripts[step]),
-            ),
-            StepFailure::Error(err) => {
-                tracing::error!("Build {} failed: {err}", self.step_name(step));
-                err
-            }
-            StepFailure::MissingInput(_)
-            | StepFailure::OccupiedOutput(..)
-            | StepFailure::MissingOutput(_) => {
-                let message = self.describe(step, &failure);
-                tracing::error!("{message}");
-                InterpreterError::ExecutionFailed(io::Error::other(message))
-            }
-        }
-    }
+/// Returns `message` with the value of every secret of the build of `args`
+/// masked, as in the output of the steps. Every diagnostic that can contain
+/// what a step wrote, such as the id or a declared path of a step it
+/// declared, is masked once, right where it is logged, returned or written.
+fn redact(args: &ExecutionArgs, message: &str) -> String {
+    let mut secrets = args
+        .secrets
+        .values()
+        .filter(|secret| !secret.is_empty())
+        .collect::<Vec<_>>();
+    // A secret containing another one is masked as a whole.
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    secrets
+        .into_iter()
+        .fold(message.to_string(), |message, secret| {
+            message.replace(secret.as_str(), "********")
+        })
 }
 
 /// Returns the metadata of the file system entry at `path`, following a

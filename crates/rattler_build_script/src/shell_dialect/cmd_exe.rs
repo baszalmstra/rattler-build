@@ -161,6 +161,40 @@ impl ShellDialect for CmdExeDialect {
         format!("@{command}\n@if %errorlevel% neq 0 exit /b %errorlevel%\n")
     }
 
+    fn remove_files(&self, paths: &[&Path]) -> String {
+        let mut lines = String::new();
+        for path in paths {
+            let quoted = quoted_path(path);
+            let failed = echo_error(&format!("cannot remove {}", path.display()));
+            let _ = writeln!(lines, "@if exist {quoted} del /f /q {quoted}");
+            let _ = writeln!(lines, "@if exist {quoted} ({failed} & exit /b 1)");
+        }
+        lines
+    }
+
+    /// `fc /b` compares the files byte by byte and fails when they differ
+    /// or one is missing. It is started from the system directory, as the
+    /// activated `PATH` may not include it. A missing manifest has no size
+    /// to compare, hence the `exist` check first.
+    fn check_step_manifest(
+        &self,
+        manifest: &Path,
+        recorded: Option<&Path>,
+        message: &str,
+    ) -> String {
+        let manifest = quoted_path(manifest);
+        let failed = format!("({} & exit /b 1)", echo_error(message));
+        match recorded {
+            None => format!(
+                "@if exist {manifest} for %%F in ({manifest}) do @if %%~zF gtr 0 {failed}\n"
+            ),
+            Some(recorded) => format!(
+                "@\"%SystemRoot%\\System32\\fc.exe\" /b {manifest} {} > nul 2>&1 || {failed}\n",
+                quoted_path(recorded)
+            ),
+        }
+    }
+
     /// `setlocal`/`endlocal` scope environment changes, while `pushd`/`popd`
     /// restore the working directory after successful sections. The saved
     /// errorlevel keeps `popd`/`endlocal` from masking a failing body.
@@ -168,6 +202,7 @@ impl ShellDialect for CmdExeDialect {
         &self,
         label: Option<&str>,
         env: &IndexMap<String, String>,
+        literal_env: &[(&str, &str)],
         cwd: Option<&Path>,
         body: &str,
     ) -> Result<String, std::io::Error> {
@@ -182,6 +217,9 @@ impl ShellDialect for CmdExeDialect {
             shell
                 .set_env_var(&mut out, key, value)
                 .map_err(std::io::Error::other)?;
+        }
+        for (name, value) in literal_env {
+            self.set_literal_env_var(&mut out, name, value)?;
         }
         let cwd = cwd
             .map(|cwd| super::quote_arg(&self.shell(), &cwd.to_string_lossy()))
@@ -207,6 +245,38 @@ impl ShellDialect for CmdExeDialect {
         );
         out.push_str("endlocal & if %RB_SECTION_ERRORLEVEL% neq 0 exit /b %RB_SECTION_ERRORLEVEL%");
         Ok(out)
+    }
+
+    /// Inside `@SET "name=value"` the operators `&`, `|`, `<`, `>`, `(`,
+    /// `)` and `^` are literal, and `%` is written as `%%` so it is not
+    /// expanded. `!` is literal too unless delayed expansion is enabled,
+    /// which the registry or `cmd /v:on` can do for the whole wrapper. When
+    /// `value` has a `!`, a second line sets it again with `^` and `!`
+    /// escaped, only when delayed expansion is enabled: then `"!!"`
+    /// expands to `""`. A double quote would end the quoted assignment, so a
+    /// value with one, which no Windows path has, is rejected.
+    fn set_literal_env_var(
+        &self,
+        out: &mut String,
+        name: &str,
+        value: &str,
+    ) -> Result<(), std::io::Error> {
+        super::validate_env_assignment(name, value)?;
+        if value.contains('"') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "environment variable '{name}' contains a double quote, which cannot be set literally in a batch file"
+                ),
+            ));
+        }
+        let value = value.replace('%', "%%");
+        let _ = writeln!(out, "@SET \"{name}={value}\"");
+        if value.contains('!') {
+            let delayed = value.replace('^', "^^").replace('!', "^!");
+            let _ = writeln!(out, "@if \"!!\"==\"\" @SET \"{name}={delayed}\"");
+        }
+        Ok(())
     }
 
     /// Returns reproduction instructions for the failed cmd wrapper script.
@@ -298,4 +368,29 @@ fn child_command(script_path: &Path) -> Vec<String> {
         "call".to_string(),
         script_path.to_string_lossy().into_owned(),
     ]
+}
+
+/// Returns `path` in double quotes for a batch file line, with `%` escaped
+/// so it is not expanded as a variable.
+fn quoted_path(path: &Path) -> String {
+    format!("\"{}\"", path.to_string_lossy().replace('%', "%%"))
+}
+
+/// Returns an `echo` command writing `message` to stderr from a batch file
+/// line, also inside a parenthesized block: the characters `cmd.exe` would
+/// read as operators are escaped, and `%` so it is not expanded.
+fn echo_error(message: &str) -> String {
+    let mut escaped = String::with_capacity(message.len());
+    for c in message.chars() {
+        match c {
+            '^' | '&' | '|' | '<' | '>' | '(' | ')' => {
+                escaped.push('^');
+                escaped.push(c);
+            }
+            '%' => escaped.push_str("%%"),
+            '\r' | '\n' => escaped.push(' '),
+            _ => escaped.push(c),
+        }
+    }
+    format!("1>&2 echo {escaped}")
 }

@@ -630,14 +630,18 @@ over to later steps. A step supports:
 - **`cwd`** - Optional working directory for this step. Relative paths are
   resolved against the host prefix (`$PREFIX` / `%PREFIX%`).
 - **`env`** - Optional environment variables scoped to this step.
-- **`id`** - Optional name for the step, used by `depends_on` and in
-  diagnostics. Letters, digits, `_`, `.` and `-` only; templates are not
-  allowed.
+- **`id`** - Optional name for the step, used by `depends_on`, `discover_after`
+  and in diagnostics, and to name the steps it generates. Letters, digits, `_`,
+  `.` and `-` only; templates are not allowed.
 - **`inputs`** - Optional list of files the step reads (see
   [Step graph](#step-graph)).
 - **`outputs`** - Optional list of files or directory trees the step writes.
 - **`depends_on`** - Optional list of step `id`s that must succeed before this
-  step starts.
+  step starts. For a step that generates steps, this waits for everything it
+  generates as well (see [Generated steps](#generated-steps)).
+- **`discover_after`** - Optional list of step `id`s whose generated steps must
+  be registered before this step starts, without waiting for them to run (see
+  [Generated steps](#generated-steps)).
 
 ```yaml title="recipe.yaml"
 build:
@@ -791,20 +795,258 @@ activated.
 Every output has exactly one producer. Two outputs that name the same path, or
 where one is inside the other, are an error, even when one step declares both.
 So are duplicate `id`s among the steps whose `if` is true (steps excluded by
-`if` may reuse an `id`), `depends_on` entries that name no `id`, cycles
-(including a step that reads one of its own outputs), malformed `glob`
-patterns, and unknown `root` or `kind` values. All of these are reported
+`if` may reuse an `id`), `depends_on` and `discover_after` entries that name no
+`id`, cycles (including a step that reads one of its own outputs), malformed
+`glob` patterns, and unknown `root` or `kind` values. All of these are reported
 before the environment is activated and before any step runs.
 
 When a step fails, no further steps start. Steps that are already running
 finish, then the build fails with the first step's error.
 
-Staging outputs run their `build.steps` the same way. `rattler-build debug run`
-replays the steps one at a time in dependency order, even where the build ran
-them in parallel (see [Debugging builds](../debugging_builds.md)).
+##### Generated steps
+
+A step can declare further steps while it runs, for example after scanning
+sources for the files it has to compile. Every step of `build.steps` runs with
+two environment variables that name files in a directory of that step alone:
+
+- **`RATTLER_BUILD_STEP_MANIFEST`** - The step may write a _step manifest_
+  here: steps to add to the build, and additions to steps that have not started
+  yet.
+- **`RATTLER_BUILD_STEP_INPUTS`** - The step may write an _input report_ here:
+  the paths it found it read while it ran.
+
+Writing either file is optional. A missing or empty file declares nothing. Both
+files are removed before the step starts, so a file left over from an earlier
+run is never read as a new declaration, and they are read only after the step
+succeeded: the declarations of a failed step are ignored. Recipe and generated
+steps cannot set these two variables in their `env`.
+
+Both files are JSON documents with `"version": 1`. A missing or different
+`version`, invalid JSON, unknown keys, `null` in place of a list, and invalid
+ids or references fail the build; no later format is guessed at. This step
+manifest declares one sorting step per file:
+
+```json title="$RATTLER_BUILD_STEP_MANIFEST"
+{
+  "version": 1,
+  "steps": [
+    {
+      "id": "sort-alpha",
+      "run": "sort alpha.txt > sorted-alpha.txt",
+      "env": {"LC_ALL": "C"},
+      "inputs": [{"root": "work", "path": "alpha.txt"}],
+      "outputs": [{"root": "work", "path": "sorted-alpha.txt"}]
+    },
+    {
+      "id": "sort-beta",
+      "run": "sort beta.txt > sorted-beta.txt",
+      "env": {"LC_ALL": "C"},
+      "inputs": [{"root": "work", "path": "beta.txt"}],
+      "outputs": [{"root": "work", "path": "sorted-beta.txt"}]
+    }
+  ]
+}
+```
+
+`steps` and `updates` are both optional lists. A generated step has these keys:
+
+- **`id`** - Required, unique within the manifest, with the same characters as
+  a recipe step `id`.
+- **`run`** - Required script string or list of commands. It is always the
+  script itself, never the path of a script file.
+- **`interpreter`**, **`cwd`**, **`env`**, **`inputs`**, **`outputs`**,
+  **`depends_on`** - As for recipe steps. `cwd` is relative to the host
+  prefix; without it the step runs in the work directory. Declaring both
+  `inputs` and `outputs` puts the step into the graph, declaring neither makes
+  it a barrier, and declaring only one is an error.
+- **`discover_after`** - As for recipe steps (see below).
+
+A generated step runs in the environment that was activated once for the
+build, with only its own `env` added. Variables that the generating step set
+or changed in its own process do not carry over, and neither do its working
+directory or its `env`. A manifest has no `if`: the generating step writes
+only the steps that should run.
+
+A generated step is known by the `id` of the step that declared it, a `/` and
+its own `id`: the steps above, written by the recipe step `plan`, are
+`plan/sort-alpha` and `plan/sort-beta`. A step that `plan/sort-alpha` declares
+in turn is `plan/sort-alpha/<id>`, so generated steps can generate further
+steps. Within `depends_on`, `discover_after` and `updates`, a manifest names
+its own steps by their plain `id` and every other step by its full name, such
+as `seed` or `scan/compile-a`. Give a generating recipe step an `id`: the steps
+generated by a step without one are shown as `@<position>/<id>` in
+diagnostics, with the 0-based position of the step among the steps whose `if`
+is true, and cannot be referenced.
+
+An entry of `updates` adds declarations to a step that another step declared
+earlier and that has not started yet:
+
+```json title="$RATTLER_BUILD_STEP_MANIFEST"
+{
+  "version": 1,
+  "updates": [
+    {
+      "step": "compile",
+      "inputs": [{"root": "work", "path": "gen/config.h"}],
+      "outputs": [{"root": "work", "path": "gen/module.mod"}],
+      "depends_on": ["configure/headers"]
+    }
+  ]
+}
+```
+
+`inputs`, `outputs` and `depends_on` are each optional and only add to what the
+step declares. The updated step must already be known when the manifest is
+registered, must not be declared by the same manifest, and must not have
+started: a step never gains prerequisites or outputs after it started, so
+updating a running or finished step fails the build.
+
+The input report lists paths in the form of step `inputs`. Rattler-Build
+validates and keeps it with the step's other declarations; it does not change
+the order in which steps run:
+
+```json title="$RATTLER_BUILD_STEP_INPUTS"
+{
+  "version": 1,
+  "inputs": [
+    {"root": "work", "path": "include/config.h"},
+    {"root": "host", "path": "include/**/*.h", "kind": "glob"}
+  ]
+}
+```
+
+###### Registration
+
+When a step succeeds, Rattler-Build reads its manifest and registers the
+declared steps and updates together with every step that is already known,
+before any of them starts. The same rules as for recipe steps apply: path
+rules, one producer per output (including outputs of recipe steps and of
+other generated steps), references that resolve, and no cycles. A generated
+output has to be declared by the step that produces it: the generating step
+does not own the outputs of the steps it declares, and it cannot claim outputs
+for itself afterwards.
+
+A step can only change steps that wait for it. When an update, or a newly
+declared output that matches one of its `inputs`, reaches a step that does not
+wait for the declaring step, the build fails, because that step could have
+started before the declaration: add the declaring step to its
+`discover_after`.
+
+Registration is all or nothing. When any declaration in a manifest is invalid,
+none of it is added, no step waiting on the generating step starts, no further
+steps start, and the build fails after the steps that are already running have
+finished.
+
+A reference to a generated step that is not known yet, such as `H/b` in the
+manifest of `G` before `H` ran, waits while `H` can still run. It fails the
+build when `H` registers a manifest that declares no step `b`, or when every
+step that could declare `H` or `H/b` has finished without doing so; the error
+names the step with the unresolved reference.
+
+A generated step that declares neither `inputs` nor `outputs` is a barrier
+among the steps of its own manifest only: it waits for the steps listed before
+it since the previous barrier of that manifest, together with everything they
+generate, and the steps listed after it wait for it. It does not order steps
+outside its manifest. Every generated step starts after its generating step,
+so after the recipe barriers before it, and a recipe barrier listed after a
+generating step waits for everything that step generates, recursively.
+
+###### `depends_on` and `discover_after`
+
+A generating step has two points at which other steps can start:
+
+- **`depends_on: [G]`** waits until `G` succeeded **and** every step it
+  generated, recursively, has succeeded. Use it for a step that needs the
+  complete result, such as a test or an install step that reads a whole
+  directory.
+- **`discover_after: [G]`** waits only until `G` succeeded and its manifest has
+  been registered. The step's `inputs` are then matched against the outputs
+  that `G` declared, so it waits for exactly the generated steps whose outputs
+  it reads, and for no others. This corresponds to a Ninja `dyndep` binding:
+  the step starts only once the discovered edges are known.
+
+A file input that a generated step produces is ready when that step has
+succeeded, like any other produced input. A file of the same name left over
+from an earlier run does not make it ready, and before a step in
+`discover_after` has registered its manifest, the consumer does not start at
+all.
+
+`discover_after` is what lets work from two generators interleave. If `G`
+declares `a` and `c`, `H` declares `b`, and `G/a` → `H/b` → `G/c` exchange
+files in that order, `H/b` can list `G` in `discover_after` and read the
+output of `G/a`. With `depends_on: [G]` instead, `H/b` would wait for `G/c`,
+which waits for `H/b`, and the build would fail with a cycle.
+
+This recipe runs the manifest shown above from `plan`, then combines the sorted
+files once they are produced and counts them once `plan` and all its generated
+steps finished:
+
+```yaml title="recipe.yaml"
+build:
+  steps:
+    - id: seed
+      inputs: []
+      outputs:
+        - {root: work, path: alpha.txt}
+        - {root: work, path: beta.txt}
+      run:
+        - printf 'pear\napple\nfig\n' > "$SRC_DIR/alpha.txt"
+        - printf 'plum\ncherry\n' > "$SRC_DIR/beta.txt"
+    # Declares `plan/sort-alpha` and `plan/sort-beta`, which read seed's outputs.
+    - id: plan
+      inputs: []
+      outputs: []
+      run: |
+        cat > "$RATTLER_BUILD_STEP_MANIFEST" <<'EOF'
+        {"version": 1, "steps": [
+          {"id": "sort-alpha", "run": "sort alpha.txt > sorted-alpha.txt",
+           "env": {"LC_ALL": "C"},
+           "inputs": [{"root": "work", "path": "alpha.txt"}],
+           "outputs": [{"root": "work", "path": "sorted-alpha.txt"}]},
+          {"id": "sort-beta", "run": "sort beta.txt > sorted-beta.txt",
+           "env": {"LC_ALL": "C"},
+           "inputs": [{"root": "work", "path": "beta.txt"}],
+           "outputs": [{"root": "work", "path": "sorted-beta.txt"}]}
+        ]}
+        EOF
+    # Starts after `plan` registered its steps; waits for the two sort steps.
+    - id: combine
+      discover_after: [plan]
+      inputs:
+        - {root: work, path: sorted-alpha.txt}
+        - {root: work, path: sorted-beta.txt}
+      outputs:
+        - {root: host, path: share/sorted.txt}
+      run:
+        - mkdir -p "$PREFIX/share"
+        - cat "$SRC_DIR/sorted-alpha.txt" "$SRC_DIR/sorted-beta.txt" > "$PREFIX/share/sorted.txt"
+    # Reads no declared file, but waits for everything `plan` generated.
+    - id: count
+      depends_on: [plan]
+      inputs: []
+      outputs:
+        - {root: host, path: share/count.txt}
+      run:
+        - mkdir -p "$PREFIX/share"
+        - ls "$SRC_DIR"/sorted-*.txt | wc -l > "$PREFIX/share/count.txt"
+```
+
+Staging outputs run their `build.steps` the same way, including generated
+steps. The staging output runs the whole graph, generated steps included, once;
+the packages that inherit from it receive the files that the steps installed
+into the host prefix, while files in the work directory, such as generated
+intermediates and the declaration files, are not packaged.
+
+`rattler-build debug run` replays the steps one at a time in dependency order,
+even where the build ran them in parallel, including the steps that were
+generated during the build. The replay stops with an error, before running any
+later step, when a generating step now declares something different from what
+it declared in the build (see [Debugging builds](../debugging_builds.md)).
 
 See [Build script](../build_script.md) for more examples and the full
-behaviour of environment variables, secrets, and interpreters.
+behaviour of environment variables, secrets, and interpreters, and
+[Dynamic build steps](../build_script.md#dynamic-build-steps) for a larger
+example that maps a Fortran-style module build onto generated steps.
 
 ### Skipping builds
 

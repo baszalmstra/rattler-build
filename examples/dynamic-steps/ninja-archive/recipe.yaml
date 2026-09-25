@@ -1,0 +1,157 @@
+# Runs the Ninja dyndep graph of build.ninja as dynamic `build.steps`: the
+# `scan` step runs the scanner edge, loads the dyndep file it wrote and
+# declares every other Ninja edge as a generated step, with the archive
+# members found by the scanner as their inputs and outputs. rattler-build runs
+# those steps; Ninja is not needed. See README.md. Build with:
+#
+#   rattler-build build --experimental --recipe examples/dynamic-steps/ninja-archive/recipe.yaml
+context:
+  name: ninja-archive-dyndep
+  version: "0.1.0"
+  # The tar archive to unpack, relative to the work directory. The `sample`
+  # step writes `sample.tar`; README.md shows how to unpack another archive.
+  archive: sample.tar
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  # build.ninja and archive_steps.py, next to this recipe.
+  path: .
+
+build:
+  number: 0
+  noarch: generic
+  steps:
+    # A small archive, generated so that it is the same on every build.
+    - id: sample
+      if: archive == "sample.tar"
+      run: python archive_steps.py sample sample.tar
+      inputs:
+        - root: work
+          path: archive_steps.py
+      outputs:
+        - root: work
+          path: sample.tar
+
+    # Does what Ninja does up to loading the dyndep file: runs the scanner
+    # edge, which writes out/archive.dd, and loads that file. Instead of
+    # running the other edges, it declares them in $RATTLER_BUILD_STEP_MANIFEST
+    # as the steps scan/untar, scan/digest, scan/stats and scan/summarize, with
+    # the archive members as outputs of scan/untar and inputs of scan/digest
+    # and scan/stats. The double quotes keep an archive name with a space or
+    # `&` in one argument, in bash and in cmd.exe.
+    - id: scan
+      run: python archive_steps.py export build.ninja --set "archive=${{ archive }}"
+      inputs:
+        - root: work
+          path: build.ninja
+        - root: work
+          path: archive_steps.py
+        - root: work
+          path: ${{ archive }}
+      outputs:
+        - root: work
+          path: out/archive.dd
+
+    # Reads what scan/untar writes. `discover_after` holds it back until
+    # `scan` has registered its steps, so that scan/untar is known as the
+    # producer of these inputs; it then runs once scan/untar is done, next to
+    # scan/digest and scan/stats.
+    - id: install-members
+      discover_after: [scan]
+      run: python archive_steps.py install-members out/archive.stamp share/ninja-archive/files
+      inputs:
+        - root: work
+          path: archive_steps.py
+        - root: work
+          path: out/archive.stamp
+        - root: work
+          path: out/extract/**
+          kind: glob
+      outputs:
+        - root: host
+          path: share/ninja-archive/files
+          kind: tree
+
+    # `depends_on: [scan]` waits for everything `scan` generated.
+    - id: install-report
+      depends_on: [scan]
+      run: python archive_steps.py install-files share/ninja-archive out/summary.txt out/SHA256SUMS out/stats.json
+      inputs:
+        - root: work
+          path: archive_steps.py
+        - root: work
+          path: out/summary.txt
+        - root: work
+          path: out/SHA256SUMS
+        - root: work
+          path: out/stats.json
+      outputs:
+        - root: host
+          path: share/ninja-archive/summary.txt
+        - root: host
+          path: share/ninja-archive/SHA256SUMS
+        - root: host
+          path: share/ninja-archive/stats.json
+
+requirements:
+  build:
+    - python >=3.8
+
+tests:
+  - package_contents:
+      files:
+        - share/ninja-archive/summary.txt
+        - share/ninja-archive/SHA256SUMS
+        - share/ninja-archive/stats.json
+        - share/ninja-archive/files/**
+  # Checks the installed files against what the generated steps computed:
+  # the same set of files in files/, SHA256SUMS and stats.json, each with the
+  # recorded checksum and size, and the file count of the summary.
+  - script:
+      interpreter: python
+      content: |
+        import hashlib
+        import json
+        import os
+
+        share = os.path.join(os.environ["PREFIX"], "share", "ninja-archive")
+        files = os.path.join(share, "files")
+        installed = sorted(
+            os.path.relpath(os.path.join(directory, name), files).replace(os.sep, "/")
+            for directory, _, names in os.walk(files)
+            for name in names
+        )
+        assert installed, "no unpacked files were installed"
+
+        checksums = {}
+        with open(os.path.join(share, "SHA256SUMS"), encoding="utf-8") as file:
+            for line in file:
+                digest, name = line.rstrip("\n").split("  ", 1)
+                checksums[name] = digest
+        assert sorted(checksums) == installed, f"SHA256SUMS lists {sorted(checksums)}, installed {installed}"
+
+        with open(os.path.join(share, "stats.json"), encoding="utf-8") as file:
+            stats = {entry["path"]: entry for entry in json.load(file)["files"]}
+        assert sorted(stats) == installed, f"stats.json lists {sorted(stats)}, installed {installed}"
+
+        for name in installed:
+            with open(os.path.join(files, *name.split("/")), "rb") as file:
+                data = file.read()
+            actual = hashlib.sha256(data).hexdigest()
+            assert actual == checksums[name], f"{name}: sha256 {actual}, expected {checksums[name]}"
+            assert len(data) == stats[name]["bytes"], f"{name}: {len(data)} bytes, expected {stats[name]['bytes']}"
+
+        with open(os.path.join(share, "summary.txt"), encoding="utf-8") as file:
+            summary = file.read()
+        assert f"files: {len(installed)} (" in summary, summary
+        print(f"verified {len(installed)} unpacked files")
+    requirements:
+      run:
+        - python
+
+about:
+  summary: Unpacks a tar archive through a Ninja dyndep graph run as dynamic build steps
+  license: BSD-3-Clause

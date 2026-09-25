@@ -5226,6 +5226,7 @@ dependencies = [
  "rattler_conda_types",
  "rattler_shell",
  "serde",
+ "serde_json",
  "serde_yaml",
  "strsim",
  "tempfile",

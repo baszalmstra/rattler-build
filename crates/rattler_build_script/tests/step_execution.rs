@@ -1009,6 +1009,7 @@ fn graph(id: &str, inputs: Vec<StepInput>, outputs: Vec<StepOutput>) -> GraphSte
         inputs: Some(inputs),
         outputs: Some(outputs),
         depends_on: Vec::new(),
+        discover_after: Vec::new(),
     }
 }
 
@@ -1616,6 +1617,7 @@ fn invalid_graphs() -> Vec<(&'static str, Vec<GraphStep>, Vec<&'static str>)> {
                 inputs: Some(Vec::new()),
                 outputs: None,
                 depends_on: Vec::new(),
+                discover_after: Vec::new(),
             }],
             vec!["half-declared"],
         ),

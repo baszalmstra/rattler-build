@@ -1,0 +1,150 @@
+schema_version: 1
+
+recipe:
+  name: staging-dynamic-build-steps
+  version: 1.0.0
+
+outputs:
+  - staging:
+      name: staging-dynamic-build-steps-cache
+    build:
+      steps:
+        # `seed` writes the work files that `plan` declares steps for.
+        - if: unix
+          id: seed
+          inputs: []
+          outputs:
+            - root: work
+              path: alpha.txt
+            - root: work
+              path: beta.txt
+          run:
+            - printf 'pear\napple\nfig\n' > "$SRC_DIR/alpha.txt"
+            - printf 'plum\ncherry\n' > "$SRC_DIR/beta.txt"
+        # `plan` declares one sorting step per work file. The generated steps
+        # are `plan/sort-alpha` and `plan/sort-beta`; each waits for `seed`
+        # because it reads one of `seed`'s outputs. `plan` also records a
+        # token that differs on every run in the host prefix.
+        - if: unix
+          id: plan
+          inputs: []
+          outputs:
+            - root: host
+              path: dynamic-plan.txt
+          run: |
+            echo "$$-$RANDOM-$RANDOM" > "$PREFIX/dynamic-plan.txt"
+            cat > "$RATTLER_BUILD_STEP_MANIFEST" <<'EOF'
+            {
+              "version": 1,
+              "steps": [
+                {
+                  "id": "sort-alpha",
+                  "run": "sort alpha.txt > sorted-alpha.txt",
+                  "env": {"LC_ALL": "C"},
+                  "inputs": [{"root": "work", "path": "alpha.txt"}],
+                  "outputs": [{"root": "work", "path": "sorted-alpha.txt"}]
+                },
+                {
+                  "id": "sort-beta",
+                  "run": "sort beta.txt > sorted-beta.txt",
+                  "env": {"LC_ALL": "C"},
+                  "inputs": [{"root": "work", "path": "beta.txt"}],
+                  "outputs": [{"root": "work", "path": "sorted-beta.txt"}]
+                }
+              ]
+            }
+            EOF
+        # Starts once `plan` has succeeded and its steps are registered, then
+        # waits for the generated producers of its inputs.
+        - if: unix
+          id: combine
+          discover_after: [plan]
+          inputs:
+            - root: work
+              path: sorted-alpha.txt
+            - root: work
+              path: sorted-beta.txt
+          outputs:
+            - root: host
+              path: dynamic-sorted.txt
+          run: cat "$SRC_DIR/sorted-alpha.txt" "$SRC_DIR/sorted-beta.txt" > "$PREFIX/dynamic-sorted.txt"
+        # Reads no declared file; `depends_on: [plan]` waits for `plan` and
+        # every step it generated, so both sorted files exist here.
+        - if: unix
+          id: count
+          depends_on: [plan]
+          inputs: []
+          outputs:
+            - root: host
+              path: dynamic-count.txt
+          run: |
+            set -- "$SRC_DIR"/sorted-*.txt
+            echo "$#" > "$PREFIX/dynamic-count.txt"
+
+        - if: win
+          id: seed
+          inputs: []
+          outputs:
+            - root: work
+              path: alpha.txt
+            - root: work
+              path: beta.txt
+          run:
+            - echo pear> "%SRC_DIR%\alpha.txt"
+            - echo apple>> "%SRC_DIR%\alpha.txt"
+            - echo fig>> "%SRC_DIR%\alpha.txt"
+            - echo plum> "%SRC_DIR%\beta.txt"
+            - echo cherry>> "%SRC_DIR%\beta.txt"
+        - if: win
+          id: plan
+          inputs: []
+          outputs:
+            - root: host
+              path: dynamic-plan.txt
+          run:
+            - '>"%PREFIX%\dynamic-plan.txt" echo %RANDOM%-%RANDOM%-%TIME%'
+            - '>"%RATTLER_BUILD_STEP_MANIFEST%" echo {"version": 1, "steps": ['
+            - '>>"%RATTLER_BUILD_STEP_MANIFEST%" echo {"id": "sort-alpha", "run": "%%SystemRoot%%\\System32\\sort.exe alpha.txt /O sorted-alpha.txt", "inputs": [{"root": "work", "path": "alpha.txt"}], "outputs": [{"root": "work", "path": "sorted-alpha.txt"}]},'
+            - '>>"%RATTLER_BUILD_STEP_MANIFEST%" echo {"id": "sort-beta", "run": "%%SystemRoot%%\\System32\\sort.exe beta.txt /O sorted-beta.txt", "inputs": [{"root": "work", "path": "beta.txt"}], "outputs": [{"root": "work", "path": "sorted-beta.txt"}]}'
+            - '>>"%RATTLER_BUILD_STEP_MANIFEST%" echo ]}'
+        - if: win
+          id: combine
+          discover_after: [plan]
+          inputs:
+            - root: work
+              path: sorted-alpha.txt
+            - root: work
+              path: sorted-beta.txt
+          outputs:
+            - root: host
+              path: dynamic-sorted.txt
+          run:
+            - type "%SRC_DIR%\sorted-alpha.txt" > "%PREFIX%\dynamic-sorted.txt"
+            - type "%SRC_DIR%\sorted-beta.txt" >> "%PREFIX%\dynamic-sorted.txt"
+        - if: win
+          id: count
+          depends_on: [plan]
+          inputs: []
+          outputs:
+            - root: host
+              path: dynamic-count.txt
+          run:
+            - set COUNT=0
+            - for %%f in ("%SRC_DIR%\sorted-*.txt") do set /a COUNT+=1
+            - '>"%PREFIX%\dynamic-count.txt" echo %COUNT%'
+
+  - package:
+      name: staging-dynamic-build-steps-a
+      version: 1.0.0
+    inherit: staging-dynamic-build-steps-cache
+    build:
+      files:
+        - "**/*"
+
+  - package:
+      name: staging-dynamic-build-steps-b
+      version: 1.0.0
+    inherit: staging-dynamic-build-steps-cache
+    build:
+      files:
+        - "**/*"

@@ -2,7 +2,9 @@ use marked_yaml::{
     Node,
     types::{MarkedMappingNode, MarkedScalarNode},
 };
-use rattler_build_script::{StepInputKind, StepOutputKind, StepRoot};
+use rattler_build_script::{
+    STEP_INPUTS_ENV, STEP_MANIFEST_ENV, StepInputKind, StepOutputKind, StepRoot, is_valid_step_id,
+};
 use rattler_build_yaml_parser::ParseError;
 use rattler_conda_types::NoArchType;
 
@@ -375,6 +377,30 @@ fn parse_env_key(field_name: &str, key_node: &MarkedScalarNode) -> Result<String
     Ok(key.to_string())
 }
 
+/// Parse a `build.steps[].env` key. On top of the usual name rules, the
+/// variables naming a step's declaration files are reserved: the executor
+/// sets them, and a recipe overriding them would hide its steps' dynamic
+/// declarations.
+fn parse_step_env_key(key_node: &MarkedScalarNode) -> Result<String, ParseError> {
+    let key = parse_env_key("steps.env", key_node)?;
+    if [STEP_MANIFEST_ENV, STEP_INPUTS_ENV]
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(&key))
+    {
+        return Err(ParseError::invalid_value(
+            "steps.env",
+            format!(
+                "environment variable '{key}' is reserved: rattler-build sets it to the file a step writes its dynamic declarations to"
+            ),
+            *key_node.span(),
+        )
+        .with_suggestion(format!(
+            "Remove '{key}' from the step's env; write to the path in ${STEP_MANIFEST_ENV} / ${STEP_INPUTS_ENV} instead"
+        )));
+    }
+    Ok(key)
+}
+
 /// Parse build files field - can be a list or include/exclude mapping
 /// Parse the `build.steps` list into an ordered list of [`Step`]s.
 pub(crate) fn parse_steps(node: &Node) -> Result<Vec<Step>, ParseError> {
@@ -407,6 +433,7 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
     let mut inputs = None;
     let mut outputs = None;
     let mut depends_on = Vec::new();
+    let mut discover_after = Vec::new();
 
     for (key_node, value_node) in mapping.iter() {
         let key = key_node.as_str();
@@ -433,7 +460,7 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
                 })?;
 
                 for (env_key_node, env_value_node) in env_mapping.iter() {
-                    let env_key = parse_env_key("steps.env", env_key_node)?;
+                    let env_key = parse_step_env_key(env_key_node)?;
                     let env_value = parse_field!("steps.env", env_value_node);
                     env.insert(env_key, env_value);
                 }
@@ -456,14 +483,10 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
                 )?);
             }
             "depends_on" => {
-                let sequence = value_node.as_sequence().ok_or_else(|| {
-                    ParseError::expected_type("sequence", "non-sequence", get_span(value_node))
-                        .with_message("Expected step 'depends_on' to be a list of step ids")
-                })?;
-                depends_on = sequence
-                    .iter()
-                    .map(|item| parse_step_id("steps.depends_on", item))
-                    .collect::<Result<_, _>>()?;
+                depends_on = parse_step_id_list("depends_on", value_node)?;
+            }
+            "discover_after" => {
+                discover_after = parse_step_id_list("discover_after", value_node)?;
             }
             _ => {
                 return Err(ParseError::invalid_value(
@@ -472,7 +495,7 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
                     *key_node.span(),
                 )
                 .with_suggestion(
-                    "Valid fields are: run, if, interpreter, cwd, env, id, inputs, outputs, depends_on",
+                    "Valid fields are: run, if, interpreter, cwd, env, id, inputs, outputs, depends_on, discover_after",
                 ));
             }
         }
@@ -513,22 +536,35 @@ fn parse_step(node: &Node) -> Result<Step, ParseError> {
         inputs,
         outputs,
         depends_on,
+        discover_after,
     }))
 }
 
-/// Parse a step id (or a `depends_on` reference to one). Ids are plain,
-/// untemplated names so they stay stable across variants.
+/// Parse a list of step id references (`depends_on`, `discover_after`).
+fn parse_step_id_list(field: &str, node: &Node) -> Result<Vec<String>, ParseError> {
+    let field_name = format!("steps.{field}");
+    let sequence = node.as_sequence().ok_or_else(|| {
+        ParseError::invalid_value(
+            field_name.as_str(),
+            "expected a list of step ids",
+            get_span(node),
+        )
+        .with_suggestion(format!("Write `{field}: [<step id>, ...]`"))
+    })?;
+    sequence
+        .iter()
+        .map(|item| parse_step_id(&field_name, item))
+        .collect()
+}
+
+/// Parse a step id (or a `depends_on` / `discover_after` reference to one).
+/// Ids are plain, untemplated names so they stay stable across variants.
 fn parse_step_id(field_name: &str, node: &Node) -> Result<String, ParseError> {
     let scalar = node.as_scalar().ok_or_else(|| {
-        ParseError::expected_type("scalar", "non-scalar", get_span(node))
-            .with_message(format!("Expected '{field_name}' to be a step id string"))
+        ParseError::invalid_value(field_name, "expected a step id string", get_span(node))
     })?;
     let id = scalar.as_str();
-    let valid = !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if !valid {
+    if !is_valid_step_id(id) {
         return Err(ParseError::invalid_value(
             field_name,
             format!("invalid step id '{id}'; expected a non-empty name of [A-Za-z0-9_.-]"),
@@ -1493,6 +1529,7 @@ steps:
     inputs: []
     outputs: []
     depends_on: [compile]
+    discover_after: [compile, scan.v2]
 "#;
         let node = marked_yaml::parse_yaml(0, yaml).unwrap();
         let build = parse_build(&node).unwrap();
@@ -1521,6 +1558,11 @@ steps:
         assert_eq!(empty.inputs.as_deref(), Some(&[][..]));
         assert_eq!(empty.outputs.as_deref(), Some(&[][..]));
         assert_eq!(empty.depends_on, vec!["compile".to_string()]);
+        assert_eq!(
+            empty.discover_after,
+            vec!["compile".to_string(), "scan.v2".to_string()]
+        );
+        assert!(compile.discover_after.is_empty());
     }
 
     #[test]
@@ -1551,6 +1593,15 @@ steps:
             ("    inputs: [a.c]\n    outputs: []\n", "mapping"),
             ("    id: ${{ name }}\n", "invalid step id"),
             ("    depends_on: [\"has space\"]\n", "invalid step id"),
+            (
+                "    discover_after: scan\n",
+                "invalid value for 'steps.discover_after': expected a list of step ids",
+            ),
+            (
+                "    discover_after: [{id: scan}]\n",
+                "invalid value for 'steps.discover_after': expected a step id string",
+            ),
+            ("    discover_after: [\"gen/child\"]\n", "invalid step id"),
         ];
 
         for (fields, expected) in cases {
@@ -1560,6 +1611,16 @@ steps:
             let message = format!("{err} {err:?}");
             assert!(message.contains(expected), "{yaml}\n{message}");
         }
+    }
+
+    #[test]
+    fn test_parse_step_discover_after_error_points_at_reference() {
+        // Line 3, 1-indexed column 28 is where `gen/child` starts.
+        let yaml = "steps:\n  - run: echo hi\n    discover_after: [scan, gen/child]\n";
+        let node = marked_yaml::parse_yaml(0, yaml).unwrap();
+        let err = parse_build(&node).expect_err("qualified ids are not static step ids");
+        let start = err.span().start().expect("span start");
+        assert_eq!((start.line(), start.column()), (3, 28), "{err}");
     }
 
     #[test]
@@ -1606,6 +1667,28 @@ steps:
                 .contains("invalid environment variable name"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn test_parse_step_env_rejects_reserved_protocol_names() {
+        for key in [
+            "RATTLER_BUILD_STEP_MANIFEST",
+            "rattler_build_step_inputs",
+            "Rattler_Build_Step_Manifest",
+        ] {
+            // Line 4, 1-indexed column 7 is where the env key starts.
+            let yaml = format!("steps:\n  - run: echo hi\n    env:\n      {key}: other.json\n");
+            let node = marked_yaml::parse_yaml(0, &yaml).unwrap();
+            let err = parse_build(&node).expect_err(&yaml);
+            assert!(err.to_string().contains("is reserved"), "{err}");
+            let start = err.span().start().expect("span start");
+            assert_eq!((start.line(), start.column()), (4, 7), "{err}");
+        }
+
+        // Legacy `build.script` never gets the step protocol files.
+        let yaml = "script:\n  env:\n    RATTLER_BUILD_STEP_MANIFEST: x\n  content: echo hi\n";
+        let node = marked_yaml::parse_yaml(0, yaml).unwrap();
+        assert!(parse_build(&node).is_ok());
     }
 
     #[test]
